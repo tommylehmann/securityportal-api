@@ -1,0 +1,66 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+
+services:
+  db:
+    container_name: "securityportal-db"
+    image: library/postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    networks:
+      - securityportal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  api:
+    container_name: "securityportal-api"
+    build:
+      context: ..
+      dockerfile: ./docker/api/Dockerfile
+      args:
+        BUILD_VERSION: v0.0.0
+    networks:
+      - securityportal
+    environment:
+      SECURITYPORTAL_PROVIDER_URL: ${SECURITYPORTAL_PROVIDER_URL}
+      SECURITYPORTAL_PUBLISHABLE_TLP: ${SECURITYPORTAL_PUBLISHABLE_TLP}
+      SECURITYPORTAL_POLL_INTERVAL: ${SECURITYPORTAL_POLL_INTERVAL}
+      SECURITYPORTAL_DATABASE_DSN: ${SECURITYPORTAL_DATABASE_DSN}
+      SECURITYPORTAL_LISTEN: ":8081"
+      SECURITYPORTAL_CORS_ORIGINS: ${SECURITYPORTAL_CORS_ORIGINS}
+    ports:
+      - "${API_PORT}:8081"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    container_name: "securityportal-web"
+    build:
+      context: ../../securityportal-web
+      dockerfile: ./Dockerfile
+    networks:
+      - securityportal
+    ports:
+      - "${WEB_PORT}:8080"
+    depends_on:
+      - api
+
+networks:
+  securityportal:
+    name: securityportal
+
+volumes:
+  db-data:
