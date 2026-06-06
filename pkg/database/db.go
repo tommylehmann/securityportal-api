@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+// SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 // Package database holds the PostgreSQL access layer: the embedded schema
 // migrations, the connection pool, and the queries that back the read-only

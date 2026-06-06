@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+// SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 package web
 
@@ -33,6 +33,9 @@ type fakeQuerier struct {
 	listErr        error
 	gotOpts        database.ListOptions
 	gotPublishable []string
+	facets         database.Facets
+	facetsErr      error
+	gotFilters     database.Filters
 	doc            []byte
 	docErr         error
 	gotDocID       int64
@@ -50,6 +53,14 @@ func (f *fakeQuerier) ListAdvisories(
 	f.gotOpts = opts
 	f.gotPublishable = publishable
 	return f.list, f.listErr
+}
+
+func (f *fakeQuerier) ComputeFacets(
+	_ context.Context, filters database.Filters, publishable []string,
+) (database.Facets, error) {
+	f.gotFilters = filters
+	f.gotPublishable = publishable
+	return f.facets, f.facetsErr
 }
 
 func (f *fakeQuerier) GetDocument(

@@ -3,13 +3,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+// SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 package database
 
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -60,6 +61,10 @@ type Advisory struct {
 	Lang               *string    `json:"lang"`
 	TrackingStatus     *string    `json:"tracking_status"`
 	Version            *string    `json:"version"`
+	// CVEs are the CVE ids extracted from the document (documents_cves),
+	// aggregated so the list view can show them without a second round-trip. Empty
+	// for an advisory with no CVEs; never null in the JSON.
+	CVEs []string `json:"cves"`
 }
 
 // AdvisoryList is a page of advisories plus the total count of rows matching the
@@ -82,10 +87,12 @@ const (
 	SortCritical ListSort = "critical"
 )
 
-// ListOptions controls a single page of the advisory list. Facet filters
-// (q/cve/severity/...) are intentionally absent here; they arrive in a later
-// phase and will extend this struct and the WHERE clause below.
+// ListOptions controls a single page of the advisory list: the combinable facet
+// filters plus pagination and ordering.
 type ListOptions struct {
+	// Filters holds the combinable search/facet predicates (q/cve/severity/...).
+	// An empty Filters narrows nothing beyond the always-on invariants.
+	Filters Filters
 	// Limit is the maximum number of rows to return. Callers are responsible for
 	// clamping it to a sane bound before calling.
 	Limit int
@@ -117,37 +124,56 @@ func (o ListOptions) orderClause() string {
 }
 
 // ListAdvisories returns one page of the latest revision per advisory, filtered
-// to publishable TLP labels and excluding withdrawn advisories.
+// to publishable TLP labels, excluding withdrawn advisories, and narrowed by the
+// combinable facet filters in opts.Filters.
 //
 // publishableTLP is the canonical upper-case set of TLP labels permitted in the
 // public portal (config.PublishableTLPSet). It is matched as a parameter against
 // upper(d.tlp), so even a document whose TLP somehow fell outside the ingest
-// gate can never leak through the read API (defense in depth, spec §8). The
-// query joins only the latest document per advisory (documents.latest) and skips
-// advisories flagged withdrawn by the deletion sweep.
+// gate can never leak through the read API (defense in depth, spec §8). An
+// optional tlp filter is intersected with this set, never substituted for it.
 //
-// All inputs are bound as query parameters; the only interpolated text is the
-// ORDER BY fragment built from a closed whitelist (see orderClause).
+// All caller inputs are bound as query parameters (see filters.go); the only
+// interpolated SQL text is the ORDER BY fragment built from a closed whitelist
+// (orderClause) and, when a free-text query is present, the ts_rank ordering
+// expression that references the same bound query parameter.
+//
+// CVEs are aggregated per document via a lateral subquery so a multi-CVE
+// advisory yields one row (no fan-out), keeping the page size and total count
+// honest.
 func (db *DB) ListAdvisories(
 	ctx context.Context,
 	opts ListOptions,
 	publishableTLP []string,
 ) (AdvisoryList, error) {
-	// The WHERE clause is shared by the count and the page query so they stay in
-	// lock-step. $1 is the publishable-TLP array.
-	const where = `
+	// The WHERE clause (and its bound args) is shared by the count and the page
+	// query so they stay in lock-step over the identical filtered set.
+	qb := newFilteredWhere(opts.Filters, publishableTLP)
+	whereBody, args := qb.where()
+	const from = `
 		FROM documents d
-		JOIN advisories a ON a.id = d.advisories_id
-		WHERE d.latest
-		  AND NOT a.withdrawn
-		  AND upper(d.tlp) = ANY($1::text[])`
+		JOIN advisories a ON a.id = d.advisories_id`
+	where := from + "\n\t\tWHERE " + whereBody
 
 	var total int64
-	if err := db.pool.QueryRow(ctx, `SELECT count(*) `+where, publishableTLP).Scan(&total); err != nil {
+	if err := db.pool.QueryRow(ctx, `SELECT count(*) `+where, args...).Scan(&total); err != nil {
 		return AdvisoryList{}, fmt.Errorf("counting advisories: %w", err)
 	}
 
-	query := `
+	// When a free-text query is active, order by relevance first, then the normal
+	// sort. The query string is already bound as the last filter parameter before
+	// any pagination args, so its placeholder index is len(args).
+	orderBy := opts.orderClause()
+	if strings.TrimSpace(opts.Filters.Query) != "" {
+		orderBy = "ORDER BY " + ftsRankExpr(qb.ftsParamIndex) + " DESC, " +
+			strings.TrimPrefix(opts.orderClause(), "ORDER BY ")
+	}
+
+	limitIdx := qb.bind(opts.Limit)
+	offsetIdx := qb.bind(opts.Offset)
+	_, args = qb.where() // refresh args to include limit/offset
+
+	query := fmt.Sprintf(`
 		SELECT
 			d.id,
 			a.tracking_id,
@@ -162,12 +188,17 @@ func (db *DB) ListAdvisories(
 			d.cvss_v3_score,
 			d.lang,
 			d.tracking_status::text,
-			d.version` +
-		where + `
-		` + opts.orderClause() + `
-		LIMIT $2 OFFSET $3`
+			d.version,
+			coalesce((
+				SELECT array_agg(uc.cve ORDER BY uc.cve)
+				FROM documents_cves dc
+				JOIN unique_cves uc ON uc.id = dc.cve_id
+				WHERE dc.documents_id = d.id), '{}') AS cves
+		%s
+		%s
+		LIMIT $%d OFFSET $%d`, where, orderBy, limitIdx, offsetIdx)
 
-	rows, err := db.pool.Query(ctx, query, publishableTLP, opts.Limit, opts.Offset)
+	rows, err := db.pool.Query(ctx, query, args...)
 	if err != nil {
 		return AdvisoryList{}, fmt.Errorf("listing advisories: %w", err)
 	}
@@ -191,6 +222,7 @@ func (db *DB) ListAdvisories(
 			&adv.Lang,
 			&adv.TrackingStatus,
 			&adv.Version,
+			&adv.CVEs,
 		); err != nil {
 			return AdvisoryList{}, fmt.Errorf("scanning advisory row: %w", err)
 		}

@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+// SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 // Package ingest pulls CSAF advisories from the Trusted Provider, verifies
 // their integrity, applies the TLP publish policy, and persists publishable

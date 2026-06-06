@@ -3,7 +3,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 #
-# SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 # Build the securityportal-api binary.
 FROM library/golang:1.26.0-alpine AS build

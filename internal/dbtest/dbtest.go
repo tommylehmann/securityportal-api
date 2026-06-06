@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+// SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 // Package dbtest provides a shared docker-in-docker PostgreSQL fixture for the
 // integration tests in this module. It centralises the throwaway-container

@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 //
-// SPDX-FileCopyrightText: 2026 SecurityPortal contributors
+// SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 // Package web implements the read-only REST API served with Gin: advisory
 // listing, single-document fetch, and the health endpoint. There is no
@@ -29,6 +29,7 @@ type Querier interface {
 	Ping(ctx context.Context) error
 	LastIngest(ctx context.Context) (time.Time, bool, error)
 	ListAdvisories(ctx context.Context, opts database.ListOptions, publishableTLP []string) (database.AdvisoryList, error)
+	ComputeFacets(ctx context.Context, f database.Filters, publishableTLP []string) (database.Facets, error)
 	GetDocument(ctx context.Context, id int64, publishableTLP []string) ([]byte, error)
 }
 
@@ -68,6 +69,10 @@ func (c *Controller) Handler() http.Handler {
 	api := router.Group("/api")
 	api.GET("/health", c.health)
 	api.GET("/advisories", c.listAdvisories)
+	// /advisories/search is an explicit alias of the list endpoint: the same
+	// handler honours the full set of search/facet params either way (spec §8).
+	api.GET("/advisories/search", c.listAdvisories)
+	api.GET("/facets", c.facets)
 	api.GET("/documents/:id", c.getDocument)
 
 	return router
