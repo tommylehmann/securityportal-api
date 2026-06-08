@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# Non-secret SECURITYPORTAL_* configuration values (SA-13 / ADR-0012).
+# The database DSN and any credentials are always stored in a Secret,
+# never here.  This ConfigMap carries operator-configurable, non-sensitive
+# runtime settings that are safe to inspect with `kubectl describe configmap`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "securityportal.fullname" . }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+data:
+  # --- API settings ---
+
+  # CSAF Trusted Provider base URL (SECURITYPORTAL_PROVIDER_URL).
+  SECURITYPORTAL_PROVIDER_URL: {{ .Values.provider.url | quote }}
+
+  # TLP labels considered publishable (SECURITYPORTAL_PUBLISHABLE_TLP).
+  SECURITYPORTAL_PUBLISHABLE_TLP: {{ .Values.provider.publishableTLP | quote }}
+
+  # Ingestion poll interval (SECURITYPORTAL_POLL_INTERVAL).
+  SECURITYPORTAL_POLL_INTERVAL: {{ .Values.provider.pollInterval | quote }}
+
+  # Per-query statement timeout (SECURITYPORTAL_QUERY_TIMEOUT).
+  SECURITYPORTAL_QUERY_TIMEOUT: {{ .Values.provider.queryTimeout | quote }}
+
+  # API listen address — always the container-internal port.
+  SECURITYPORTAL_LISTEN: ":8081"
+
+  # Same-origin deployment: CORS headers are not needed because the browser
+  # always talks to the Ingress (same origin), not the api directly.
+  # Leave SECURITYPORTAL_CORS_ORIGINS unset (ADR-0011 / ADR-0012).
+  SECURITYPORTAL_CORS_ORIGINS: ""
+
+  # --- Web settings ---
+
+  # SSR load functions call the api directly via the cluster-internal Service
+  # DNS name rather than going through the Ingress (ADR-0011 / ADR-0012).
+  # Format: http://<release>-api:<port>
+  SECURITYPORTAL_API_INTERNAL_URL: {{ printf "http://%s-api:8081" (include "securityportal.fullname" .) | quote }}
+
+  # Same-origin deployment: PUBLIC_API_BASE_URL is empty so the browser issues
+  # relative /api/... requests, which the Ingress routes to the api Service.
+  PUBLIC_API_BASE_URL: ""
+
+  # --- Branding (non-secret) ---
+  {{- if .Values.branding.name }}
+  SECURITYPORTAL_BRAND_NAME: {{ .Values.branding.name | quote }}
+  {{- end }}
+  {{- if .Values.branding.subtitle }}
+  SECURITYPORTAL_BRAND_SUBTITLE: {{ .Values.branding.subtitle | quote }}
+  {{- end }}
+  {{- if .Values.branding.themePrimary }}
+  SECURITYPORTAL_THEME_PRIMARY: {{ .Values.branding.themePrimary | quote }}
+  {{- end }}
+  {{- if .Values.branding.themePrimaryFg }}
+  SECURITYPORTAL_THEME_PRIMARY_FG: {{ .Values.branding.themePrimaryFg | quote }}
+  {{- end }}
+  {{- if .Values.branding.themeAccent }}
+  SECURITYPORTAL_THEME_ACCENT: {{ .Values.branding.themeAccent | quote }}
+  {{- end }}
+
+  # --- Logo and legal dir paths (non-secret; paths are inside the container) ---
+  {{- if (include "securityportal.logoEnabled" .) }}
+  SECURITYPORTAL_LOGO_PATH: {{ printf "%s/%s" .Values.logo.mountPath .Values.logo.filename | quote }}
+  {{- end }}
+  {{- if (include "securityportal.legalEnabled" .) }}
+  SECURITYPORTAL_LEGAL_DIR: {{ .Values.legalContent.mountPath | quote }}
+  {{- end }}

@@ -52,20 +52,50 @@ The stack brings up Postgres, the API on `:8081`, and the web frontend on `:8080
 
 ## Configuration
 
-All settings are environment variables (no config files or secrets in source).
+All settings are environment variables (no config files or secrets in source). The stack shares configuration across three deployment targets (Compose, Kubernetes, bare-metal); see the Deployment options section for target-specific instructions.
+
+### API configuration (Go backend)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | **Ingestion** | | |
-| `SECURITYPORTAL_PROVIDER_URL` | (required) | Base URL of the CSAF Trusted Provider, e.g. `https://provider.example.com` |
-| `SECURITYPORTAL_PUBLISHABLE_TLP` | `WHITE,UNLABELED` | Comma-separated TLP labels that are public. Documents with other labels are never ingested or served. |
-| `SECURITYPORTAL_POLL_INTERVAL` | `15m` | Time between polling cycles (Go duration syntax). Set to `0` to disable polling and serve only. |
-| **API** | | |
-| `SECURITYPORTAL_LISTEN` | `:8081` | TCP address to listen on (`:8081` or `127.0.0.1:8081`) |
-| `SECURITYPORTAL_CORS_ORIGINS` | (empty) | Comma-separated browser origins allowed to call the API cross-origin. Leave empty for no CORS headers. |
-| `SECURITYPORTAL_QUERY_TIMEOUT` | `5s` | Per-query statement timeout (Go duration syntax). Protects against expensive searches. Set to `0` to disable. |
+| `SECURITYPORTAL_PROVIDER_URL` | (required) | Base URL or PMD URL of the CSAF Trusted Provider to pull advisories from, e.g. `https://provider.example.com` or the full `https://provider.example.com/.well-known/csaf/provider-metadata.json`. The gocsaf loader supports both; the full URL short-circuits discovery. (See §9 / task 36 for the BSI WID example.) |
+| `SECURITYPORTAL_PUBLISHABLE_TLP` | `WHITE,UNLABELED` | Comma-separated TLP labels that are public (publish policy). Documents with other labels are never ingested or served. Alias `CLEAR` is normalized to `WHITE` (CSAF 2.0 renamed WHITE→CLEAR; both are the same level). |
+| `SECURITYPORTAL_POLL_INTERVAL` | `15m` | Time between polling cycles (Go duration syntax: `15m`, `1h`, `6h`). Set to `0` to disable polling (serve-only mode). Large corpora (e.g., BSI WID) benefit from longer intervals (e.g., 6h) to avoid hammering the provider; see `.env.wid.example`. |
+| **API service** | | |
+| `SECURITYPORTAL_LISTEN` | `:8081` | TCP address the read-only HTTP API binds to. Use `:8081` for all interfaces or `127.0.0.1:8081` for localhost only. |
+| `SECURITYPORTAL_CORS_ORIGINS` | (empty) | Comma-separated browser origins allowed to call the API cross-origin (e.g., `https://portal.example.com`). Leave empty (or unset) in same-origin deployments (Compose via Caddy, Kubernetes via Ingress) where the browser never talks to the API directly; CSP handles it. Only set for non-proxy deploys where the frontend is separate or cross-origin. |
+| `SECURITYPORTAL_QUERY_TIMEOUT` | `5s` | Per-query statement timeout (Go duration syntax). Protects against expensive searches and DoS via Postgres (threat model C-7 / R-4). Set to `0` to disable (not recommended for production). |
 | **Database** | | |
-| `SECURITYPORTAL_DATABASE_DSN` | (required) | PostgreSQL connection string, e.g. `postgres://user:pass@localhost:5432/securityportal?sslmode=disable` |
+| `SECURITYPORTAL_DATABASE_DSN` | (required) | PostgreSQL connection string, e.g. `postgres://user:pass@localhost:5432/securityportal?sslmode=disable`. This is a **secret**; never log it verbatim or commit it to source. |
+
+### Web + portal configuration (SvelteKit frontend, Phase 7)
+
+These are read by the web service at **runtime** via `$env/dynamic/private` (server-side only) and `$env/dynamic/public` (accessible to browser). See `securityportal-web/README.md` §Configuration for the full reference.
+
+| Variable | Scope | Default | Description |
+|----------|-------|---------|-------------|
+| `PUBLIC_API_BASE_URL` | browser | `""` (same-origin) | Backend API base URL for the browser. Empty = same-origin relative `/api/...` (correct for Compose/Kubernetes). Absolute origin (e.g., `https://api.example.com`) = cross-origin API; CSP is extended to allow it. |
+| `SECURITYPORTAL_API_INTERNAL_URL` | server-only | unset | **Compose/Kubernetes only:** internal address for SSR load functions (e.g., `http://api:8081`). When set, SSR bypasses the reverse proxy and hits the API directly on the internal network. When unset, SSR falls through to the browser's base. |
+| `SECURITYPORTAL_BRAND_NAME` | server-only | `"SecurityPortal"` | Portal title (header + logo alt text). No HTML; plain text only. |
+| `SECURITYPORTAL_BRAND_SUBTITLE` | server-only | `"CSAF Advisory Portal"` | Portal subtitle (header). Plain text. |
+| `SECURITYPORTAL_THEME_PRIMARY` | server-only | `"#2563eb"` | Primary brand color (hex `#rrggbb` or RGB `R G B` decimal). Validated server-side; invalid values are logged and ignored (SA-22). |
+| `SECURITYPORTAL_THEME_PRIMARY_FG` | server-only | unset | Foreground (text) color on primary bg (hex or RGB). **v1 scope: unused.** |
+| `SECURITYPORTAL_THEME_ACCENT` | server-only | unset | Accent color override (hex or RGB). **v1 scope: unused.** |
+| `SECURITYPORTAL_LOGO_PATH` | server-only | unset | Path to a logo file (SVG/PNG/WebP) served at `/branding/logo`. Fixed at process start (never request-derived, SA-20). When unset, a built-in shield glyph is shown. In containerized deployments, mount the logo file and set the path to where it exists inside the container (e.g., `/config/logo.png`). |
+| `SECURITYPORTAL_LEGAL_DIR` | server-only | unset | Directory containing legal Markdown files (`impressum.de.md`, `impressum.en.md`, `datenschutz.de.md`, `datenschutz.en.md`). When unset, placeholders with amber banners are shown (OQ-4 default). In containerized deployments, mount the directory and set the path to the mount point (e.g., `/config/legal`). See ADR-0010 for sanitization + fallback chain. |
+
+### Reverse proxy configuration (Caddy, Compose deployment)
+
+These are read by the Caddy reverse proxy in the Docker Compose stack. See `docker/.env.example` and `docker/caddy/Caddyfile` for details.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SP_SITE_ADDRESS` | `localhost` | Public hostname for the Caddy site block. Unset or `localhost` selects self-signed TLS (MODE 1). Set to a public FQDN for ACME/Let's Encrypt (MODE 2, requires `SP_ACME_EMAIL`). |
+| `SP_ACME_EMAIL` | unset | ACME registration email (Let's Encrypt, MODE 2). Uncomment in `.env` to enable ACME; leave unset (not empty string) for MODE 1 self-signed. When unset, Caddy defaults to `{$SP_ACME_EMAIL:internal}` → self-signed. |
+| `SP_TLS_CERT` / `SP_TLS_KEY` | unset | **BYO certificate paths (MODE 3, documentation only).** Absolute paths *inside the Caddy container* to the PEM files. To use BYO: set `SP_SITE_ADDRESS` to your FQDN, leave `SP_ACME_EMAIL` unset, and bind-mount the cert/key files into the container. Update the compose service to mount `docker/caddy/Caddyfile.byo` instead of the default Caddyfile. |
+| `SP_RATE_LIMIT_REQUESTS` | `60` | Requests per sliding window per source IP (Caddy rate limiting). Tuned via `SP_RATE_LIMIT_WINDOW`. Requires custom Caddy image with `caddy-ratelimit` module (built via `docker/caddy/Dockerfile` in the default compose setup). |
+| `SP_RATE_LIMIT_WINDOW` | `1m` | Rate-limit sliding window (e.g., `1m`, `60s`). Example: `60` requests per `1m` = 1 req/sec per IP. |
 
 ## Subcommands
 
@@ -326,6 +356,16 @@ Untrusted CSAF content is treated carefully by the frontend:
 - Free-text fields are **escaped plain text with `white-space: pre-wrap`** (see ADR-0001).
 - HTML-derived URLs are scheme-checked (allow `http`, `https`, `mailto`; block `javascript:`, `data:`) before rendering.
 - A Content Security Policy (CSP) restricts script execution.
+
+## Deployment options
+
+SecurityPortal supports three deployment targets with identical runtime config and security properties:
+
+1. **Docker Compose** (batteries-included) — `docs/DEPLOYMENT.md`. Bundled Caddy reverse proxy, all services in containers, local self-signed or ACME/BYO TLS.
+2. **Kubernetes Helm chart** — `deploy/helm/securityportal/` in the main repository. Deployments + Services, Ingress for TLS, optional bundled PostgreSQL, ConfigMap/Secret for config.
+3. **Bare-metal / hand-rolled** — `docs/DEPLOYMENT-BAREMETAL.md`. Go binary + Node.js under systemd, external Postgres, operator-provided reverse proxy (nginx/Caddy examples included).
+
+All three share the same `SECURITYPORTAL_*` environment variables and security-header ownership model (app owns CSP, proxy owns HSTS/TLS). Choose the target that fits your infrastructure.
 
 ## Deployment checklist
 

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -186,14 +187,57 @@ func runServe(cfg *config.Config) error {
 // runMigrate connects to the database and applies all pending schema migrations.
 // No statement timeout is set: DDL statements on a large schema may take longer
 // than the read-path default, and this command is operator-invoked, not public.
+//
+// When running as a Helm initContainer for a bundled PostgreSQL deployment the
+// database may not be accepting connections yet when this command starts.
+// runMigrate retries the connection with exponential backoff (2 s, 4 s, 8 s,
+// capped at 16 s) for up to migrateMaxWait total.  This avoids a dependency on
+// a shell-based pg_isready loop in the initContainer command — the api image is
+// a scratch binary with no shell.  For external-DB deployments (hook Job path)
+// the DB is already up, so the first attempt succeeds immediately and the retry
+// logic is never exercised.
+const (
+	migrateMaxWait     = 5 * time.Minute
+	migrateInitBackoff = 2 * time.Second
+	migrateMaxBackoff  = 16 * time.Second
+)
+
 func runMigrate(cfg *config.Config) error {
 	ctx := context.Background()
 
+	// pgxpool connects lazily, so NewDB rarely errors even against a dead
+	// server; the connection failure surfaces inside Migrate. Retry around
+	// Migrate (which is idempotent / version-tracked, so re-running after a
+	// connect failure is safe) so the bundled-Postgres initContainer waits
+	// in-process instead of relying solely on kubelet restart loops.
 	db, err := database.NewDB(ctx, cfg.DatabaseDSN, 0)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
-	return db.Migrate(ctx)
+	deadline := time.Now().Add(migrateMaxWait)
+	backoff := migrateInitBackoff
+	attempt := 0
+
+	for {
+		attempt++
+		if err = db.Migrate(ctx); err == nil {
+			return nil
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("migrate: not completed after %s (last error: %w)", migrateMaxWait, err)
+		}
+
+		slog.Warn("migrate: database not reachable, retrying",
+			"attempt", attempt, "backoff", backoff, "error", err)
+		time.Sleep(backoff)
+		if backoff < migrateMaxBackoff {
+			backoff *= 2
+			if backoff > migrateMaxBackoff {
+				backoff = migrateMaxBackoff
+			}
+		}
+	}
 }

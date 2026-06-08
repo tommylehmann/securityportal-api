@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# Database migration Job — Helm pre-install and pre-upgrade hook.
+#
+# This Job is rendered ONLY when postgresql.enabled=false (external database).
+# For the bundled Bitnami PostgreSQL case (postgresql.enabled=true) migration
+# runs in an initContainer on the api Deployment instead.  The reason: a
+# pre-install hook runs before Helm creates any non-hook resources (including
+# the bundled PostgreSQL StatefulSet and its Secret), so the Job would fail
+# with "secret not found" / "connection refused" on a fresh install.  Using
+# an initContainer ensures the migrate step runs only after the pod env is
+# resolved and the subchart resources exist.
+#
+# For external-DB deployments the Secret and database are pre-existing, so the
+# hook Job path works correctly and runs exactly once per install/upgrade.
+#
+# Design rationale: a Helm hook Job runs once per install/upgrade before the
+# Deployments are updated.  This ensures the database schema is current before
+# any new api or web replicas start receiving traffic.  An initContainer runs
+# on every pod restart, not just on schema changes; a hook Job surfaces
+# failures in `helm status`.
+#
+# The Job uses the same api image (`securityportal-api migrate`) and the same
+# database Secret as the api Deployment, so no extra image is required.
+{{- if and .Values.migration.enabled (not .Values.postgresql.enabled) }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "securityportal.fullname" . }}-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    # Run before resources are installed/upgraded.
+    "helm.sh/hook": pre-install,pre-upgrade
+    # Delete the completed Job after the next hook execution so the name does
+    # not collide on the next upgrade.
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "securityportal.labels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "securityportal.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: {{ printf "%s:%s" .Values.api.image.repository .Values.api.image.tag | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          args: ["migrate"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            # Only the DSN is needed for `securityportal-api migrate`; the
+            # provider URL and poll settings are irrelevant for migrations
+            # (ValidateForIngest is not called by the migrate subcommand).
+            {{- if .Values.postgresql.enabled }}
+            - name: SECURITYPORTAL_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-postgresql" .Release.Name }}
+                  key: password
+            - name: SECURITYPORTAL_DATABASE_DSN
+              value: {{ printf "postgres://%s:$(SECURITYPORTAL_DB_PASSWORD)@%s-postgresql:5432/%s?sslmode=disable"
+                          .Values.postgresql.auth.username
+                          .Release.Name
+                          .Values.postgresql.auth.database | quote }}
+            {{- else }}
+            - name: SECURITYPORTAL_DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "securityportal.dbSecretName" . }}
+                  key: dsn
+            {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

@@ -1,0 +1,135 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Test-only compose stack for the Caddy reverse-proxy e2e smoke (task 35).
+#
+# Purpose: bring up caddy + web + api + db in the same topology as the
+# production docker/docker-compose.yml and assert the full same-origin contract:
+#   - HTTPS through Caddy (self-signed TLS, -k / --insecure)
+#   - /api/* routed to api:8081 (same-origin; no CORS)
+#   - /*    routed to web:8080
+#   - Only Caddy publishes host ports (SA-21)
+#   - web SSR fetches api:8081 directly via SECURITYPORTAL_API_INTERNAL_URL (task 33)
+#
+# Port mapping (avoids collision with the production stack on 80/443 and the
+# existing compose.test.yml stack on 58080/58081/55480):
+#   Host 8443  → Caddy 443  (HTTPS — primary test entry point)
+#   Host 8880  → Caddy 80   (HTTP  — asserts redirect or reachability)
+#   Host 55490 → db   5432  (psql seed; no production psql needed on the host)
+#
+# api and web have NO host-port publish (SA-21 test).
+#
+# Build contexts (relative to this file's location: securityportal-api/tests/e2e/):
+#   api: context=../.. (securityportal-api repo root), dockerfile=docker/api/Dockerfile
+#   web: context=../../../securityportal-web, dockerfile=Dockerfile
+#   caddy: built from docker/caddy/Dockerfile (custom xcaddy image with rate-limit module)
+
+services:
+  db:
+    image: library/postgres:16-alpine
+    container_name: sp-proxy-test-db
+    environment:
+      POSTGRES_USER: sptest
+      POSTGRES_PASSWORD: sptest
+      POSTGRES_DB: sptest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sptest"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      - sp-proxy-test
+    ports:
+      - "55490:5432"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: docker/api/Dockerfile
+      args:
+        BUILD_VERSION: v0.0.0-proxy-e2e
+    image: sp-proxy-e2e-api:latest
+    container_name: sp-proxy-test-api
+    environment:
+      SECURITYPORTAL_PROVIDER_URL: https://provider.invalid
+      SECURITYPORTAL_PUBLISHABLE_TLP: WHITE,UNLABELED
+      SECURITYPORTAL_POLL_INTERVAL: 10m
+      SECURITYPORTAL_DATABASE_DSN: postgres://sptest:sptest@db:5432/sptest?sslmode=disable
+      SECURITYPORTAL_LISTEN: ":8081"
+      # No CORS needed: same-origin via Caddy (ADR-0011).
+      # Leave SECURITYPORTAL_CORS_ORIGINS unset.
+      SECURITYPORTAL_QUERY_TIMEOUT: 5s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sp-proxy-test
+    # No host-port publish — api is only reachable through Caddy (SA-21 test).
+
+  web:
+    build:
+      context: ../../../securityportal-web
+      dockerfile: Dockerfile
+    image: sp-proxy-e2e-web:latest
+    container_name: sp-proxy-test-web
+    environment:
+      # SSR server-side fetch goes directly to api (not through Caddy) — task 33.
+      SECURITYPORTAL_API_INTERNAL_URL: "http://api:8081"
+      # Empty PUBLIC_API_BASE_URL → browser issues relative /api/... requests,
+      # which Caddy routes to api:8081 (same-origin, no CORS dependency).
+      PUBLIC_API_BASE_URL: ""
+    depends_on:
+      - api
+    networks:
+      - sp-proxy-test
+    # No host-port publish — web is only reachable through Caddy (SA-21 test).
+
+  caddy:
+    # Use the CUSTOM Caddy image built with xcaddy + caddy-ratelimit (SA-26 / C-14).
+    # The stock caddy:2 image does NOT include the rate_limit directive; using it
+    # here would cause Caddy to reject the production Caddyfile with "unrecognized
+    # directive: rate_limit", breaking the stack and silently skipping SA-26 checks.
+    # docker/caddy/Dockerfile builds caddy:2.9 + github.com/mholt/caddy-ratelimit.
+    build:
+      context: ../../docker/caddy
+      dockerfile: Dockerfile
+    image: sp-proxy-e2e-caddy:latest
+    container_name: sp-proxy-test-caddy
+    networks:
+      - sp-proxy-test
+    ports:
+      # Map to non-conflicting host ports (production stack owns 80/443).
+      # Test script accesses https://localhost:8443 and http://localhost:8880.
+      - "8443:443"
+      - "8880:80"
+    environment:
+      # Self-signed TLS (MODE 1): SP_ACME_EMAIL left unset → Caddy uses
+      # {$SP_ACME_EMAIL:internal} → "internal" → local CA self-signed cert.
+      # SP_SITE_ADDRESS defaults to "localhost" in the Caddyfile.
+      SP_SITE_ADDRESS: "localhost"
+      # Rate-limit tuning for the e2e test: set a very low cap so the burst
+      # assertion (assertion 7) can trigger 429s with a small request count.
+      # SP_RATE_LIMIT_REQUESTS is read by the Caddyfile via {$SP_RATE_LIMIT_REQUESTS:60}.
+      SP_RATE_LIMIT_REQUESTS: "5"
+      SP_RATE_LIMIT_WINDOW: "60s"
+    volumes:
+      # Bind-mount the production Caddyfile (same file used in production).
+      - ../../docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persistent cert/config storage for the container's lifetime.
+      - caddy_proxy_test_data:/data
+      - caddy_proxy_test_config:/config
+    depends_on:
+      - api
+      - web
+
+networks:
+  sp-proxy-test:
+    name: sp-proxy-test
+
+volumes:
+  caddy_proxy_test_data:
+  caddy_proxy_test_config:

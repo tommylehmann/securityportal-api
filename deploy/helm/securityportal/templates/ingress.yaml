@@ -1,0 +1,71 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# Single Ingress — same-origin routing, k8s analog of the Caddy reverse proxy
+# in the Docker Compose target (ADR-0011 / ADR-0012).
+#
+# Routing:
+#   /api  →  api Service :8081   (securityportal-api)   pathType: Prefix
+#   /     →  web Service :8080   (securityportal-web)   pathType: Prefix
+#
+# nginx longest-prefix matching guarantees that /api/... hits the api rule
+# before the catch-all / rule.  No regex or rewrite annotation is needed, and
+# the api serves under /api so no path-stripping is required.
+#
+# The Ingress controller owns TLS termination and HSTS.  nginx-ingress enables
+# HSTS by default; add the annotation overrides in values.ingress.annotations
+# to customise max-age or disable it.
+#
+# The app owns CSP + per-response security headers (ADR-0006).  Do NOT add
+# nginx ConfigurationSnippets or proxy_set_header directives that re-emit
+# Content-Security-Policy, X-Frame-Options, Referrer-Policy, or
+# Permissions-Policy — doing so would duplicate or override the app's headers.
+#
+# Both Services are ClusterIP-only.  This Ingress is the only public entry
+# point (SA-21 k8s analog).
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "securityportal.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" (include "securityportal.fullname" .)) | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          # /api/* → securityportal-api (port 8081).
+          # Prefix pathType: nginx selects the longest matching prefix, so
+          # /api/* reaches the api before the catch-all / rule.  The api serves
+          # under /api so the path passes through unmodified — no rewrite needed.
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "securityportal.fullname" . }}-api
+                port:
+                  number: 8081
+          # /* → securityportal-web (port 8080).
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "securityportal.fullname" . }}-web
+                port:
+                  number: 8080
+{{- end }}

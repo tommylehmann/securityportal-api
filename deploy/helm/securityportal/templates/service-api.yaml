@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# securityportal-api ClusterIP Service.
+# ClusterIP is the only service type used (SA-21 k8s analog / ADR-0012).
+# The api is reachable only via the Ingress from outside the cluster, and
+# directly by the web pods on the cluster-internal DNS name
+# "<release>-api:8081" (used by SECURITYPORTAL_API_INTERNAL_URL).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "securityportal.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  # ClusterIP only — no NodePort, no LoadBalancer (SA-21).
+  type: ClusterIP
+  selector:
+    {{- include "securityportal.api.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http
+      protocol: TCP

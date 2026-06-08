@@ -1,0 +1,156 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# securityportal-api Deployment.
+#
+# The api image runs `securityportal-api serve`, which runs the HTTP API
+# server (port 8081) and the CSAF ingestion poller in a single process.  No
+# separate CronJob / sidecar is required; both goroutines share the same DB
+# pool and config and cancel cleanly together on SIGTERM.
+#
+# Services are ClusterIP only.  The api pod is not reachable from outside the
+# cluster except through the Ingress (SA-21 k8s analog / ADR-0012).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "securityportal.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  replicas: {{ .Values.api.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "securityportal.api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "securityportal.labels" . | nindent 8 }}
+        {{- include "securityportal.api.selectorLabels" . | nindent 8 }}
+        {{- with .Values.api.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.api.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "securityportal.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.postgresql.enabled }}
+      # When the bundled Bitnami PostgreSQL subchart is enabled, schema
+      # migration runs here as an initContainer rather than in a pre-install
+      # hook Job.  The hook Job runs before Helm creates any non-hook
+      # resources (including the subchart's StatefulSet and Secret), so it
+      # would fail before the database is available.  The initContainer runs
+      # after the pod's environment is resolved and blocks the api container
+      # from starting until the migration succeeds.
+      #
+      # The command loop: try pg_isready until the server accepts connections,
+      # then run `securityportal-api migrate`.  securityportal-api migrate is
+      # idempotent (forward-only, no-op when the schema is already up to date),
+      # so restarting the pod on node eviction / rolling update is safe.
+      #
+      # For external-DB deployments the hook Job (job-migrate.yaml) is used
+      # instead and this block is omitted.
+      initContainers:
+        - name: migrate
+          image: {{ printf "%s:%s" .Values.api.image.repository .Values.api.image.tag | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          # `securityportal-api migrate` has built-in retry with exponential
+          # backoff (up to 5 min) so it waits for the bundled PostgreSQL pod to
+          # accept connections.  No shell or pg_isready is needed — the api
+          # image is a scratch binary.
+          args: ["migrate"]
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: SECURITYPORTAL_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-postgresql" .Release.Name }}
+                  key: password
+            - name: SECURITYPORTAL_DATABASE_DSN
+              value: {{ printf "postgres://%s:$(SECURITYPORTAL_DB_PASSWORD)@%s-postgresql:5432/%s?sslmode=disable"
+                          .Values.postgresql.auth.username
+                          .Release.Name
+                          .Values.postgresql.auth.database | quote }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      {{- end }}
+      containers:
+        - name: api
+          image: {{ printf "%s:%s" .Values.api.image.repository .Values.api.image.tag | quote }}
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          args: {{ toJson .Values.api.command }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          # Non-secret configuration from the ConfigMap.
+          envFrom:
+            - configMapRef:
+                name: {{ include "securityportal.fullname" . }}-config
+          env:
+            # DB DSN from the Secret (SA-13: never in ConfigMap).
+            {{- if .Values.postgresql.enabled }}
+            # Bundled Bitnami subchart: build the DSN from subchart values.
+            - name: SECURITYPORTAL_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ printf "%s-postgresql" .Release.Name }}
+                  key: password
+            - name: SECURITYPORTAL_DATABASE_DSN
+              value: {{ printf "postgres://%s:$(SECURITYPORTAL_DB_PASSWORD)@%s-postgresql:5432/%s?sslmode=disable"
+                          .Values.postgresql.auth.username
+                          .Release.Name
+                          .Values.postgresql.auth.database | quote }}
+            {{- else }}
+            - name: SECURITYPORTAL_DATABASE_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "securityportal.dbSecretName" . }}
+                  key: dsn
+            {{- end }}
+            {{- with .Values.api.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.api.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.api.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.api.resources | nindent 12 }}
+          volumeMounts:
+            # A writable tmpfs for any transient runtime writes (e.g. Go's
+            # tmp files); the root filesystem is read-only.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

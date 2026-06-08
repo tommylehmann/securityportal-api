@@ -39,9 +39,12 @@ services:
       SECURITYPORTAL_POLL_INTERVAL: ${SECURITYPORTAL_POLL_INTERVAL}
       SECURITYPORTAL_DATABASE_DSN: ${SECURITYPORTAL_DATABASE_DSN}
       SECURITYPORTAL_LISTEN: ":8081"
-      SECURITYPORTAL_CORS_ORIGINS: ${SECURITYPORTAL_CORS_ORIGINS}
-    ports:
-      - "${API_PORT}:8081"
+      # Same-origin deployment via Caddy: CORS headers are not needed because the
+      # browser always talks to Caddy (same origin), not the API directly.
+      # Leave SECURITYPORTAL_CORS_ORIGINS unset or empty (ADR-0011).
+    # No host-port publish: api is only reachable through Caddy (SA-21).
+    # To access the API directly during development, use docker compose exec or
+    # add a ports override in a local docker-compose.override.yml.
     depends_on:
       db:
         condition: service_healthy
@@ -53,10 +56,58 @@ services:
       dockerfile: ./Dockerfile
     networks:
       - securityportal
-    ports:
-      - "${WEB_PORT}:8080"
+    environment:
+      # SSR load functions call the API directly via the internal Docker network
+      # rather than going through Caddy (ADR-0011 / task 33).
+      SECURITYPORTAL_API_INTERNAL_URL: "http://api:8081"
+      # Same-origin deployment: PUBLIC_API_BASE_URL is empty so the browser
+      # issues relative /api/... requests, which Caddy routes to api:8081.
+      PUBLIC_API_BASE_URL: ""
+    # No host-port publish: web is only reachable through Caddy (SA-21).
     depends_on:
       - api
+
+  caddy:
+    container_name: "securityportal-caddy"
+    build:
+      context: ./caddy
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - securityportal
+    ports:
+      # Only Caddy publishes host ports; api and web are internal-network only.
+      - "80:80"
+      - "443:443"
+    environment:
+      # Site address for the Caddy site block; Caddyfile default is "localhost".
+      # Set to the public FQDN for production (MODE 2 / ACME).
+      SP_SITE_ADDRESS: "${SP_SITE_ADDRESS:-localhost}"
+      # SP_ACME_EMAIL pass-through: when set in the host env or .env, Docker
+      # Compose forwards it into the container and Caddy uses it as the ACME
+      # registration email (MODE 2 — Let's Encrypt).  When it is absent from the
+      # host environment the env var is not present inside the container, and
+      # Caddy's {$SP_ACME_EMAIL:internal} placeholder defaults to "internal"
+      # (MODE 1 — self-signed).  A null value here (no ":" suffix) means
+      # pass-through; it does NOT set the variable to empty, so Caddy's fallback
+      # fires correctly.
+      SP_ACME_EMAIL:
+      # Rate-limit tuning (SA-26 / C-14 / ADR-0011).
+      # Caddy reads these from its container environment via the
+      # {$SP_RATE_LIMIT_REQUESTS:60} / {$SP_RATE_LIMIT_WINDOW:1m} placeholders in
+      # the Caddyfile.  Passing them here ensures that operator overrides set in
+      # .env (or docker/.env) actually reach the Caddy process; without this
+      # pass-through only the Caddyfile compile-time defaults would apply.
+      SP_RATE_LIMIT_REQUESTS: "${SP_RATE_LIMIT_REQUESTS:-60}"
+      SP_RATE_LIMIT_WINDOW: "${SP_RATE_LIMIT_WINDOW:-1m}"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Persistent certificate storage — required for ACME and self-signed CA.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
 
 networks:
   securityportal:
@@ -64,3 +115,5 @@ networks:
 
 volumes:
   db-data:
+  caddy_data:
+  caddy_config:

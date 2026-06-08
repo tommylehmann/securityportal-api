@@ -1,0 +1,136 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Caddyfile for the SecurityPortal Compose deployment (ADR-0011).
+#
+# Routing:  /api/*  → api:8081   (securityportal-api)
+#           /*      → web:8080   (securityportal-web)
+#
+# Only Caddy publishes host ports 80 and 443; api and web are internal-network
+# only (SA-21).  The web service's SSR load functions call api:8081 directly
+# via SECURITYPORTAL_API_INTERNAL_URL rather than going through Caddy.
+#
+# ---------------------------------------------------------------------------
+# TLS mode selection (ADR-0011)
+#
+# MODE 1 — local self-signed (default, dev / air-gapped):
+#   Leave SP_ACME_EMAIL unset (not in .env).
+#   SP_SITE_ADDRESS is optional (defaults to "localhost").
+#   → Caddy generates a self-signed certificate via its internal CA.
+#     Browsers will show a TLS warning unless the CA root is trusted.
+#
+# MODE 2 — ACME / Let's Encrypt (standard production):
+#   SP_SITE_ADDRESS=portal.example.com   (public FQDN, must be DNS-reachable)
+#   SP_ACME_EMAIL=ops@example.com        (non-empty — enables ACME)
+#   → Caddy obtains and auto-renews a certificate via Let's Encrypt.
+#     Port 80 must be publicly reachable for the HTTP-01 challenge.
+#
+# IMPORTANT: Do NOT set SP_ACME_EMAIL to an empty string in .env.
+# Leave the line commented out entirely for MODE 1.  An empty-string value
+# breaks Caddy's {$VAR:default} substitution and causes a startup error.
+#
+# MODE 3 — BYO certificate (operator-supplied PEM files):
+#   Mount docker/caddy/Caddyfile.byo as /etc/caddy/Caddyfile in the caddy
+#   container (via a compose override or volume bind-mount).
+#   See docker/caddy/Caddyfile.byo for the ready-to-use template.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Rate limiting (SA-26 / C-14)
+#
+# The custom Caddy image (docker/caddy/Dockerfile) includes the
+# caddy-ratelimit module (https://github.com/mholt/caddy-ratelimit) built via
+# xcaddy.  The rate_limit block in the site config below is active by default.
+#
+# Tuning (override via environment variables or .env):
+#   SP_RATE_LIMIT_REQUESTS  requests per window per source IP  (default: 60)
+#   SP_RATE_LIMIT_WINDOW    sliding window (Go duration syntax) (default: 1m)
+#
+# 60 req/min per IP allows normal interactive browsing while blocking trivial
+# scrapers and burst flooding.  Adjust for production traffic as needed.
+# Application-level mitigations (statement timeout C-7, offset cap C-7) remain
+# active regardless.
+# ---------------------------------------------------------------------------
+{
+	# Structured JSON logging for production log aggregators.
+	log {
+		format json
+	}
+}
+
+# ---------------------------------------------------------------------------
+# Site block
+#
+# SP_SITE_ADDRESS defaults to "localhost" (MODE 1).  For production set it to
+# the public FQDN, e.g. portal.example.com (MODE 2).
+# ---------------------------------------------------------------------------
+{$SP_SITE_ADDRESS:localhost} {
+	# -----------------------------------------------------------------------
+	# TLS — MODE 1 (internal self-signed) or MODE 2 (ACME)
+	#
+	# SP_ACME_EMAIL controls the tls directive argument:
+	#   unset       → "internal"   → Caddy self-signed CA (MODE 1, default)
+	#   email addr  → ACME email   → Let's Encrypt certificate (MODE 2)
+	#
+	# Note: SP_ACME_EMAIL must not be set to an empty string; leave it unset
+	# (commented out in .env.example) for MODE 1.  See .env.example.
+	# -----------------------------------------------------------------------
+	tls {$SP_ACME_EMAIL:internal}
+
+	# -----------------------------------------------------------------------
+	# HSTS (SA-24 / ADR-0011)
+	#
+	# Strict-Transport-Security is set once at the proxy layer.  The web
+	# application deliberately omits HSTS (see hooks.server.ts) because the
+	# app may also be served over plain HTTP in dev.  Caddy adds it only on
+	# HTTPS responses (it is not sent on HTTP redirect responses, per spec).
+	# -----------------------------------------------------------------------
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# -----------------------------------------------------------------------
+	# Header ownership (SA-23 / ADR-0011)
+	#
+	# CSP, X-Frame-Options, Referrer-Policy, Permissions-Policy, and
+	# X-Content-Type-Options are owned by the web application (hooks.server.ts).
+	# Caddy has no directives to add these headers and therefore passes them
+	# through unmodified from the upstream responses.  The absence of any
+	# header-add/header-set directive here for these names is intentional and
+	# ensures the app's values are not duplicated or replaced.
+	# -----------------------------------------------------------------------
+
+	# -----------------------------------------------------------------------
+	# Rate limiting (SA-26 / C-14) — enforced by the custom Caddy image.
+	#
+	# Matches every public route (/api/*, web pages, /branding/*).
+	# Per source IP: 60 requests per 1-minute sliding window by default.
+	# A burst over the limit yields 429 Too Many Requests.
+	# See global comment above for tuning via SP_RATE_LIMIT_REQUESTS /
+	# SP_RATE_LIMIT_WINDOW.
+	# -----------------------------------------------------------------------
+	@public {
+		not path /internal/*
+	}
+	rate_limit @public {
+		zone public_zone {
+			key {remote_host}
+			events {$SP_RATE_LIMIT_REQUESTS:60}
+			window {$SP_RATE_LIMIT_WINDOW:1m}
+		}
+	}
+
+	# -----------------------------------------------------------------------
+	# Routing
+	# -----------------------------------------------------------------------
+
+	# /api/* → securityportal-api (port 8081, internal network).
+	# The upstream mounts its routes under /api so the path is forwarded as-is.
+	@api path /api/*
+	reverse_proxy @api api:8081
+
+	# /* → securityportal-web (port 8080, internal network).
+	reverse_proxy web:8080
+}

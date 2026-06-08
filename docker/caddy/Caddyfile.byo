@@ -1,0 +1,49 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Caddyfile for MODE 3 — BYO certificate (operator-supplied PEM files).
+#
+# To use this file instead of the default Caddyfile, add a bind-mount for this
+# file to the caddy service in a docker-compose.override.yml:
+#
+#   services:
+#     caddy:
+#       volumes:
+#         - ./caddy/Caddyfile.byo:/etc/caddy/Caddyfile:ro
+#         - /absolute/host/path/to/fullchain.pem:/certs/fullchain.pem:ro
+#         - /absolute/host/path/to/privkey.pem:/certs/privkey.pem:ro
+#
+# Also set in .env:
+#   SP_SITE_ADDRESS=portal.example.com
+#
+# The Caddyfile is otherwise identical to the default (same routing, HSTS,
+# and header-ownership contract).
+{
+	log {
+		format json
+	}
+}
+
+{$SP_SITE_ADDRESS:localhost} {
+	# BYO certificate — two-argument form: cert then key.
+	# /certs/fullchain.pem and /certs/privkey.pem must be bind-mounted into the
+	# caddy container (see compose override instructions above).
+	tls /certs/fullchain.pem /certs/privkey.pem
+
+	# HSTS — see main Caddyfile for rationale.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# App-owned headers (CSP, X-Frame-Options, etc.) pass through unmodified.
+	# No header-add/header-set directives here for those names (SA-23/ADR-0011).
+
+	# rate_limit @public { ... }   # see Caddyfile for the full rate-limit block
+
+	@api path /api/*
+	reverse_proxy @api api:8081
+
+	reverse_proxy web:8080
+}

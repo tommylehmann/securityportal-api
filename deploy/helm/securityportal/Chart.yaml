@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+apiVersion: v2
+name: securityportal
+description: >
+  Public read-only CSAF advisory portal.  Deploys securityportal-api (Go, port 8081) and
+  securityportal-web (SvelteKit adapter-node, port 8080) behind a single Kubernetes Ingress.
+  Optional bundled PostgreSQL via Bitnami subchart (dev only); external DSN recommended for
+  production (ADR-0012 / OQ-11).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - csaf
+  - advisory
+  - security
+  - portal
+home: https://github.com/securityportal/securityportal-api
+sources:
+  - https://github.com/securityportal/securityportal-api
+  - https://github.com/securityportal/securityportal-web
+maintainers:
+  - name: SecurityPortal operators
+
+# Optional PostgreSQL dependency (Bitnami).
+# Enabled when postgresql.enabled=true in values.yaml.
+# Set postgresql.enabled=false (the default) and provide externalDatabase.dsn
+# (as a Secret) for production deployments.
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled

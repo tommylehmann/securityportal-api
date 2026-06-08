@@ -3,9 +3,13 @@ SPDX-License-Identifier: Apache-2.0
 SPDX-FileCopyrightText: 2026 Tommy Lehmann
 -->
 
-# SecurityPortal Deployment Guide
+# SecurityPortal Deployment Guide (Docker Compose)
 
-This document covers deploying the complete SecurityPortal stack (API + web frontend + Postgres database) to production.
+This document covers deploying the complete SecurityPortal stack (API + web frontend + Postgres database) to production using Docker Compose.
+
+For other deployment options, see:
+- **Bare-metal / hand-rolled:** [`DEPLOYMENT-BAREMETAL.md`](DEPLOYMENT-BAREMETAL.md) (Go binary + Node.js under systemd, external Postgres, operator-provided reverse proxy).
+- **Kubernetes:** Helm chart at `deploy/helm/securityportal` in the main repository (Deployments + Ingress, optional bundled PostgreSQL).
 
 ## Architecture overview
 
@@ -78,7 +82,7 @@ cd docker
 cp .env.example .env
 ```
 
-Edit `docker/.env` with your deployment values:
+Edit `docker/.env` with your deployment values. The Compose stack bundles a Caddy reverse proxy that handles TLS and same-origin routing, so only Caddy publishes host ports (80/443):
 
 ```bash
 # --- CSAF Trusted Provider ---
@@ -87,11 +91,11 @@ SECURITYPORTAL_PUBLISHABLE_TLP=WHITE,UNLABELED
 SECURITYPORTAL_POLL_INTERVAL=15m
 
 # --- API ---
+# Internal listen address (inside the container). Leave as :8081.
 SECURITYPORTAL_LISTEN=:8081
+# Cross-origin CORS: leave empty for same-origin via Caddy (ADR-0011).
+# Only set if the web frontend runs separately (cross-origin API call).
 SECURITYPORTAL_CORS_ORIGINS=
-# ^ Leave empty if your reverse proxy handles same-origin requests
-# ^ Set to https://portal.example.com if the frontend is separate/cross-origin
-
 SECURITYPORTAL_QUERY_TIMEOUT=5s
 
 # --- Database ---
@@ -100,10 +104,20 @@ POSTGRES_PASSWORD=YOUR_GENERATED_PASSWORD_HERE
 POSTGRES_DB=securityportal
 SECURITYPORTAL_DATABASE_DSN=postgres://securityportal:YOUR_GENERATED_PASSWORD_HERE@db:5432/securityportal?sslmode=disable
 
-# --- Ports (on the host, mapped from the containers) ---
-API_PORT=8081
-WEB_PORT=8080
+# --- Caddy reverse proxy (Phase 7) ---
+# Public hostname for the site. "localhost" = self-signed TLS (default).
+# Set to a real FQDN for ACME/Let's Encrypt (and set SP_ACME_EMAIL below).
+SP_SITE_ADDRESS=localhost
+
+# ACME email (uncomment for Let's Encrypt MODE 2; leave commented for self-signed MODE 1).
+# SP_ACME_EMAIL=ops@example.com
+
+# Rate limiting (requests per sliding window per IP; requires custom Caddy image).
+SP_RATE_LIMIT_REQUESTS=60
+SP_RATE_LIMIT_WINDOW=1m
 ```
+
+For more details on TLS modes and rate limiting, see `docker/caddy/Caddyfile` and the API README.
 
 **IMPORTANT:** Do NOT commit `.env` to git. Add it to `.gitignore` (already in place).
 
@@ -117,6 +131,54 @@ docker compose config
 
 # Should print the resolved services (db, api, web) with all env values filled in
 ```
+
+### Branding (optional, Phase 7)
+
+To customize the portal's appearance without rebuilding the container:
+
+**Brand name and subtitle** — add to `.env`:
+```bash
+SECURITYPORTAL_BRAND_NAME="Your Organization PSIRT"
+SECURITYPORTAL_BRAND_SUBTITLE="Security Advisory Portal"
+```
+
+**Primary color** — hex or RGB decimal (e.g., `#b91c1c` or `185 28 28`):
+```bash
+SECURITYPORTAL_THEME_PRIMARY="#b91c1c"
+# or
+SECURITYPORTAL_THEME_PRIMARY="185 28 28"
+```
+
+**Logo** — place an SVG, PNG, or WebP file on the host, then bind-mount it and set the path:
+```bash
+# 1. Prepare the file (e.g., /opt/securityportal/branding/logo.png)
+# 2. Add to docker-compose.override.yml or edit docker-compose.yml:
+web:
+  volumes:
+    - /opt/securityportal/branding/logo.png:/config/logo.png:ro
+  environment:
+    SECURITYPORTAL_LOGO_PATH: /config/logo.png
+```
+
+**Legal pages (Markdown)** — place `impressum.de.md`, `impressum.en.md`, `datenschutz.de.md`, `datenschutz.en.md` in a directory on the host, bind-mount it, and set the path. Each file supports Markdown (headings, lists, tables, safe links). Content is sanitized at render time (no inline HTML, no scripts). When files are missing the portal shows placeholders (required for German compliance):
+
+```bash
+# 1. Create the directory structure:
+/opt/securityportal/legal/
+  ├── impressum.de.md       # German company/contact info
+  ├── impressum.en.md       # English imprint
+  ├── datenschutz.de.md     # German privacy policy
+  └── datenschutz.en.md     # English privacy policy
+
+# 2. Add to docker-compose.override.yml:
+web:
+  volumes:
+    - /opt/securityportal/legal:/config/legal:ro
+  environment:
+    SECURITYPORTAL_LEGAL_DIR: /config/legal
+```
+
+See the web README (§Configuration, "Legal content") for the full Markdown + sanitization reference.
 
 ## Step 2: First-time setup
 
@@ -182,16 +244,39 @@ curl http://localhost:8080/
 # Should return HTML (the web home page)
 ```
 
-## Step 3: Configure the reverse proxy
+## Step 3: Bundled Caddy reverse proxy
 
-Your reverse proxy (nginx, Caddy, Apache) is responsible for:
-1. Terminating TLS (HTTPS)
-2. Proxying `/api/*` to `http://localhost:8081/`
-3. Proxying `/` to `http://localhost:8080/`
-4. Setting security headers (if not already set by the application)
-5. Rate limiting (e.g., per-IP limits on `/api/advisories`)
+The Docker Compose stack includes Caddy, which handles TLS and same-origin routing. It publishes ports 80 and 443; the API and web services are internal-only (SA-21). Caddy is already configured via `docker/caddy/Caddyfile` with:
 
-### Example nginx configuration
+- **TLS:** MODE 1 (self-signed, default) → `{$SP_SITE_ADDRESS:localhost}` with local cert. Set `SP_SITE_ADDRESS` to a real FQDN and `SP_ACME_EMAIL` to enable MODE 2 (ACME/Let's Encrypt). For MODE 3 (bring-your-own cert), see `docker/caddy/Caddyfile.byo`.
+- **Routing:** `/api/*` → api:8081, `/*` → web:8080 (same-origin, no CORS needed).
+- **HSTS:** `max-age=31536000; includeSubDomains` set by Caddy (proxy responsibility per ADR-0011).
+- **Rate limiting:** default 60 requests per 1m per IP (requires custom Caddy image built with `caddy-ratelimit`).
+
+**To customize:**
+- Edit `.env` to change `SP_SITE_ADDRESS`, `SP_ACME_EMAIL`, `SP_RATE_LIMIT_REQUESTS`, `SP_RATE_LIMIT_WINDOW`.
+- Restart the stack: `docker compose down && docker compose up -d`.
+
+### Optional: External reverse proxy
+
+If you prefer to run an external reverse proxy (nginx, Apache, another Caddy instance) in front of the stack, you can disable the bundled Caddy and expose the web/api services directly:
+
+**Edit docker/docker-compose.override.yml:**
+```yaml
+services:
+  caddy:
+    profiles: [disabled]  # Skip bundled Caddy
+  web:
+    ports:
+      - "8080:8080"       # Expose web to host
+  api:
+    ports:
+      - "8081:8081"       # Expose API to host
+```
+
+Then configure your external proxy to route `/api/*` to `localhost:8081` and `/*` to `localhost:8080`. Examples:
+
+### Example external nginx configuration
 
 ```nginx
 # /etc/nginx/sites-available/securityportal

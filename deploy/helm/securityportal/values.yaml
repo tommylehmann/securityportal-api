@@ -1,0 +1,337 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# ---------------------------------------------------------------------------
+# SecurityPortal Helm chart — default values
+#
+# All SECURITYPORTAL_* env vars consumed by the images are documented here.
+# Secrets (DB DSN, provider credentials) are always stored in a Kubernetes
+# Secret, never in a ConfigMap (SA-13 / ADR-0012).
+#
+# ADR-0012 routing contract (k8s analog of ADR-0011 Caddy):
+#   /api/*  → api Service (ClusterIP, port 8081)
+#   /*      → web Service (ClusterIP, port 8080)
+#
+# Both Services are ClusterIP-only.  No NodePort / LoadBalancer is created.
+# The stack is reachable only via the Ingress (SA-21 k8s analog).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Chart name overrides (consumed by _helpers.tpl securityportal.name /
+# securityportal.fullname).  Leave empty to use the chart / release defaults.
+# ---------------------------------------------------------------------------
+nameOverride: ""
+fullnameOverride: ""
+
+# ---------------------------------------------------------------------------
+# API workload
+# ---------------------------------------------------------------------------
+api:
+  image:
+    repository: ghcr.io/securityportal/securityportal-api
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  # The api Deployment runs `securityportal-api serve`, which starts the HTTP
+  # API server and the ingestion poller in a single process.  A dedicated
+  # CronJob or separate Deployment is not needed because the poll loop is
+  # lightweight (it sleeps between cycles) and the two goroutines share the
+  # same database connection pool and config.  Running both in one process
+  # also ensures they cancel cleanly together on SIGTERM.
+  command: ["serve"]
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  # Liveness / readiness — the api exposes /api/health.
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: 8081
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 8081
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  podAnnotations: {}
+  podLabels: {}
+
+  # Extra environment variables (non-secret) — appended to the container env.
+  extraEnv: []
+  #  - name: SECURITYPORTAL_EXTRA
+  #    value: "example"
+
+# ---------------------------------------------------------------------------
+# Web workload
+# ---------------------------------------------------------------------------
+web:
+  image:
+    repository: ghcr.io/securityportal/securityportal-web
+    tag: "0.1.0"
+    pullPolicy: IfNotPresent
+
+  replicaCount: 1
+
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+
+  livenessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 10
+    periodSeconds: 15
+  readinessProbe:
+    httpGet:
+      path: /
+      port: 8080
+    initialDelaySeconds: 5
+    periodSeconds: 10
+
+  podAnnotations: {}
+  podLabels: {}
+
+  extraEnv: []
+
+# ---------------------------------------------------------------------------
+# Ingress — single entry point for the whole stack (SA-21 analog)
+#
+# Routes (pathType: Prefix — controller-agnostic, no regex needed):
+#   /api  → api Service :8081  (longest prefix wins; /api/health reaches api)
+#   /     → web Service :8080
+#
+# Services are ClusterIP only; no NodePort/LoadBalancer is ever created.
+# The Ingress controller owns TLS termination + HSTS (ADR-0011 k8s analog).
+# HSTS is typically enabled by default in nginx-ingress; see the annotations
+# example below.  The app owns CSP + per-response security headers (ADR-0006);
+# do NOT add nginx ConfigurationSnippets that re-emit those headers here.
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: "nginx"
+  # Host for the Ingress rule.  Replace with your public FQDN for production.
+  host: "portal.example.com"
+
+  # TLS — reference a pre-existing Secret or use cert-manager annotation.
+  # Leave tls.enabled=false for plain-HTTP dev (not recommended for production).
+  tls:
+    enabled: false
+    # secretName: "securityportal-tls"
+
+  # Annotations on the Ingress resource.
+  # nginx-ingress enables HSTS by default (nginx.ingress.kubernetes.io/hsts).
+  # Document: HSTS is the ingress controller's responsibility (ADR-0011).
+  # To enable HSTS explicitly or customise max-age, use:
+  #   nginx.ingress.kubernetes.io/hsts: "true"
+  #   nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+  #   nginx.ingress.kubernetes.io/hsts-include-subdomains: "true"
+  annotations: {}
+  #  nginx.ingress.kubernetes.io/hsts: "true"
+  #  nginx.ingress.kubernetes.io/hsts-max-age: "31536000"
+  #  nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  #  cert-manager.io/cluster-issuer: "letsencrypt-prod"
+
+# ---------------------------------------------------------------------------
+# Provider configuration — non-secret values go into the ConfigMap.
+# ---------------------------------------------------------------------------
+provider:
+  # Base URL of the CSAF Trusted Provider (SECURITYPORTAL_PROVIDER_URL).
+  url: "https://provider.example.com"
+  # Comma-separated list of TLP labels that are publishable
+  # (SECURITYPORTAL_PUBLISHABLE_TLP).  Default matches the threat-model
+  # default: WHITE and UNLABELED only.
+  publishableTLP: "WHITE,UNLABELED"
+  # Poll interval for the ingestion worker (SECURITYPORTAL_POLL_INTERVAL).
+  pollInterval: "15m"
+  # Per-query statement timeout (SECURITYPORTAL_QUERY_TIMEOUT).
+  queryTimeout: "5s"
+
+# ---------------------------------------------------------------------------
+# Branding — non-secret, goes into the ConfigMap.
+# ---------------------------------------------------------------------------
+branding:
+  # Override the UI brand name (SECURITYPORTAL_BRAND_NAME).
+  # Leave empty to use the built-in default.
+  name: ""
+  # Override the UI subtitle (SECURITYPORTAL_BRAND_SUBTITLE).
+  subtitle: ""
+  # Primary theme color as #rrggbb or "R G B" channel triple
+  # (SECURITYPORTAL_THEME_PRIMARY).  Empty = built-in default palette.
+  themePrimary: ""
+  # Primary foreground color (SECURITYPORTAL_THEME_PRIMARY_FG).
+  themePrimaryFg: ""
+  # Accent color (SECURITYPORTAL_THEME_ACCENT).
+  themeAccent: ""
+
+# ---------------------------------------------------------------------------
+# Legal content — Impressum / Datenschutz Markdown files.
+#
+# The web app reads ${SECURITYPORTAL_LEGAL_DIR}/impressum.{de,en}.md and
+# ${SECURITYPORTAL_LEGAL_DIR}/datenschutz.{de,en}.md at request time.
+#
+# Two sourcing modes (choose one):
+#
+#  A) legalContent.files — inline Markdown in values.yaml.  A ConfigMap is
+#     generated from these values and mounted at legalContent.mountPath inside
+#     the web pod.  Suitable for moderate-length texts.
+#
+#  B) legalContent.existingConfigMap — name of an operator-managed ConfigMap
+#     whose keys match the file names above (impressum.de.md, etc.).  Use
+#     this when you manage legal texts outside Helm (separate ConfigMap or
+#     external secret management).
+#
+# When both are empty the web app shows placeholder text (OQ-4 default).
+# ---------------------------------------------------------------------------
+legalContent:
+  mountPath: "/legal"
+  # Mode A: inline Markdown.  Leave all empty to use placeholder text.
+  files:
+    impressumDe: ""
+    impressumEn: ""
+    datenschutzDe: ""
+    datenschutzEn: ""
+  # Mode B: bring-your-own ConfigMap name.  When set, Mode A is ignored and no
+  # ConfigMap is generated for legal files.
+  existingConfigMap: ""
+
+# ---------------------------------------------------------------------------
+# Logo
+#
+# Two sourcing modes:
+#
+#  A) logo.data — base64-encoded image bytes in values.yaml.  A Secret is
+#     generated and mounted at logo.mountPath + "/" + logo.filename.
+#     (Stored in a Secret rather than a ConfigMap because logos may be
+#     proprietary; using a Secret also keeps the mount approach uniform.)
+#
+#  B) logo.existingSecret — name of an operator-managed Secret.  Key must
+#     match logo.filename.  When set, Mode A is ignored.
+#
+# When neither is configured the web app shows its built-in icon
+# (SECURITYPORTAL_LOGO_PATH is left empty → /branding/logo returns 404 →
+# layout falls back to the built-in icon).
+# ---------------------------------------------------------------------------
+logo:
+  mountPath: "/logo"
+  filename: "logo.png"
+  # Mode A: base64-encoded image content (set via --set-file or a values file).
+  data: ""
+  # Mode B: bring-your-own Secret name.
+  existingSecret: ""
+
+# ---------------------------------------------------------------------------
+# Database
+#
+# Production deployments: set postgresql.enabled=false and supply a DSN via
+# externalDatabase.existingSecret (recommended) or externalDatabase.dsn.
+#
+# Development / demo: set postgresql.enabled=true to deploy a Bitnami
+# PostgreSQL subchart.  NOT recommended for production (no HA, minimal tuning,
+# ephemeral PVC by default in many cluster configurations).
+#
+# SA-13 / ADR-0012: the database DSN is always stored in a Kubernetes Secret
+# (field "dsn").  It is never placed in a ConfigMap or logged verbatim.
+# ---------------------------------------------------------------------------
+externalDatabase:
+  # DSN value to store in the generated Secret.  Used only when
+  # existingSecret is empty.  Example:
+  #   "postgres://user:password@db-host:5432/securityportal?sslmode=require"
+  dsn: ""
+  # Name of a pre-existing Secret that holds the DSN in a key named "dsn".
+  # When set, no Secret is generated for the database and dsn above is ignored.
+  existingSecret: ""
+
+# Bitnami PostgreSQL subchart — bundled database for dev/demo.
+# See https://github.com/bitnami/charts/tree/main/bitnami/postgresql for full
+# subchart values.
+postgresql:
+  enabled: false
+  auth:
+    database: securityportal
+    username: securityportal
+    # Password placeholder — override for real deployments.
+    # Use postgresql.auth.existingSecret in production.
+    password: "changeme"
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# ---------------------------------------------------------------------------
+# Database migration
+#
+# Two paths depending on the database mode:
+#
+#  postgresql.enabled=true (bundled dev DB):
+#    Migration runs in an initContainer on the api Deployment.  The hook Job
+#    cannot be used here because pre-install hooks run before Helm creates the
+#    subchart's StatefulSet and Secret, so the Job would fail immediately.
+#    The initContainer blocks the api container from starting until
+#    `securityportal-api migrate` succeeds; the binary has built-in retry so
+#    it waits for the bundled PostgreSQL pod to accept connections.
+#
+#  postgresql.enabled=false (external DB, recommended for production):
+#    Migration runs as a Helm pre-install/pre-upgrade hook Job.  The external
+#    database (and its Secret) are pre-existing, so the Job can connect
+#    immediately.  The Job runs exactly once per Helm operation, surfaces
+#    failures in `helm status`, and is deleted on success.
+# ---------------------------------------------------------------------------
+migration:
+  enabled: true
+  # How long Kubernetes waits for the Job to complete before failing the hook.
+  # Increase if your corpus is very large and migrations take longer.
+  activeDeadlineSeconds: 300
+  # Number of times Kubernetes retries the Job on failure.
+  backoffLimit: 3
+
+# ---------------------------------------------------------------------------
+# Service-account, RBAC, pod security
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Pod security context (applied to all pods in the release).
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container security context (applied to api and web containers).
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# ---------------------------------------------------------------------------
+# Image pull secrets (if images are in a private registry)
+# ---------------------------------------------------------------------------
+imagePullSecrets: []
+# - name: my-registry-secret
+
+# ---------------------------------------------------------------------------
+# Node affinity / tolerations / topology spread
+# ---------------------------------------------------------------------------
+nodeSelector: {}
+tolerations: []
+affinity: {}

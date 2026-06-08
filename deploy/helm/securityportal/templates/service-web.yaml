@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# securityportal-web ClusterIP Service.
+# ClusterIP is the only service type used (SA-21 k8s analog / ADR-0012).
+# The web app is reachable only via the Ingress from outside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "securityportal.fullname" . }}-web
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+spec:
+  # ClusterIP only — no NodePort, no LoadBalancer (SA-21).
+  type: ClusterIP
+  selector:
+    {{- include "securityportal.web.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+      protocol: TCP

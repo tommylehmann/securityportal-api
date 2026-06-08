@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# Legal content ConfigMap — holds the Impressum and Datenschutzerklärung
+# Markdown files for the web app (SECURITYPORTAL_LEGAL_DIR).
+#
+# Generated only when:
+#   - legalContent.existingConfigMap is empty  (no operator-provided CM), AND
+#   - at least one of the legalContent.files.* values is non-empty.
+#
+# When all files are empty this ConfigMap is not created and
+# SECURITYPORTAL_LEGAL_DIR is not set, so the web app renders the built-in
+# placeholder text for both pages (OQ-4 default).
+{{- if and (not .Values.legalContent.existingConfigMap)
+          (or .Values.legalContent.files.impressumDe
+              .Values.legalContent.files.impressumEn
+              .Values.legalContent.files.datenschutzDe
+              .Values.legalContent.files.datenschutzEn) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "securityportal.fullname" . }}-legal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "securityportal.labels" . | nindent 4 }}
+data:
+  {{- if .Values.legalContent.files.impressumDe }}
+  impressum.de.md: |
+    {{- .Values.legalContent.files.impressumDe | nindent 4 }}
+  {{- end }}
+  {{- if .Values.legalContent.files.impressumEn }}
+  impressum.en.md: |
+    {{- .Values.legalContent.files.impressumEn | nindent 4 }}
+  {{- end }}
+  {{- if .Values.legalContent.files.datenschutzDe }}
+  datenschutz.de.md: |
+    {{- .Values.legalContent.files.datenschutzDe | nindent 4 }}
+  {{- end }}
+  {{- if .Values.legalContent.files.datenschutzEn }}
+  datenschutz.en.md: |
+    {{- .Values.legalContent.files.datenschutzEn | nindent 4 }}
+  {{- end }}
+{{- end }}
