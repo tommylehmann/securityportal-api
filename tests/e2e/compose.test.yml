@@ -1,0 +1,97 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Test-only compose stack.  Brings up postgres + api + web on non-conflicting
+# ports so the e2e suite can run inside the devcontainer alongside other
+# services without port collisions.
+#
+# Design rationale for seeding strategy:
+#   A live CSAF Trusted Provider is not available in CI.  Spinning up a fake
+#   provider is possible but requires PGP-signed advisories with correct hashes,
+#   making the fixture fragile and the test slow.  Instead, e2e-stack.sh applies
+#   migrations via `api migrate`, then injects two fixture documents directly
+#   into Postgres via seed.sql (COPY/INSERT).  The triggers and generated columns
+#   in the schema populate all facet fields automatically, exactly as ingest would
+#   — the only omission is that the Raw/original bytes column is NULL, which is
+#   acceptable (the document column is what matters; the unit/integration ingest
+#   tests already cover the verification path).  This approach is deterministic,
+#   fast, and does not require network access or a real provider.
+#
+# Build contexts (relative to this file's location: securityportal-api/tests/e2e/):
+#   api: context=../.. (securityportal-api repo root), dockerfile=docker/api/Dockerfile
+#   web: context=../../../securityportal-web, dockerfile=Dockerfile
+
+services:
+  db:
+    image: library/postgres:16-alpine
+    container_name: sp-e2e-db
+    environment:
+      POSTGRES_USER: sptest
+      POSTGRES_PASSWORD: sptest
+      POSTGRES_DB: sptest
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sptest"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+    networks:
+      - sp-e2e
+    ports:
+      # Expose on a non-standard port so existing sp-demo-db (5433) and the
+      # devcontainer postgres (5432) are not shadowed.
+      - "55480:5432"
+
+  api:
+    build:
+      context: ../..
+      dockerfile: docker/api/Dockerfile
+      args:
+        BUILD_VERSION: v0.0.0-e2e
+    image: sp-e2e-api:latest
+    container_name: sp-e2e-api
+    environment:
+      # Provider URL is intentionally set to a non-routable address so the
+      # poll worker fails harmlessly on every cycle — it logs a warning and
+      # retries; the API layer still serves the seeded data normally.
+      SECURITYPORTAL_PROVIDER_URL: https://provider.invalid
+      SECURITYPORTAL_PUBLISHABLE_TLP: WHITE,UNLABELED
+      # Long interval so the noisy "provider unreachable" cycle does not spam
+      # logs during the ~30 s the test stack is alive.
+      SECURITYPORTAL_POLL_INTERVAL: 10m
+      SECURITYPORTAL_DATABASE_DSN: postgres://sptest:sptest@db:5432/sptest?sslmode=disable
+      SECURITYPORTAL_LISTEN: ":8081"
+      SECURITYPORTAL_CORS_ORIGINS: "http://web:8080"
+      SECURITYPORTAL_QUERY_TIMEOUT: 5s
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - sp-e2e
+    ports:
+      - "58081:8081"
+
+  web:
+    build:
+      context: ../../../securityportal-web
+      dockerfile: Dockerfile
+    image: sp-e2e-web:latest
+    container_name: sp-e2e-web
+    environment:
+      # The web container's server-side fetch reaches the api container over the
+      # shared sp-e2e network.  The browser-side (public) URL is the same origin
+      # served by the reverse proxy / the test harness, so same-origin applies.
+      PUBLIC_API_BASE_URL: http://api:8081
+    depends_on:
+      - api
+    networks:
+      - sp-e2e
+    ports:
+      - "58080:8080"
+
+networks:
+  sp-e2e:
+    name: sp-e2e

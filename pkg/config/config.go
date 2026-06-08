@@ -41,6 +41,11 @@ const (
 	// API from a browser, e.g. "https://portal.example.com". Empty disables CORS
 	// (no Access-Control-Allow-Origin header is emitted).
 	EnvCORSOrigins = "SECURITYPORTAL_CORS_ORIGINS"
+	// EnvQueryTimeout is the per-query statement timeout on the read pool, e.g.
+	// "5s". A slow or expensive query is cancelled when this deadline is exceeded,
+	// protecting against DoS via long-running SQL (threat model C-7 / R-4).
+	// Set to 0 to disable (not recommended for production deployments).
+	EnvQueryTimeout = "SECURITYPORTAL_QUERY_TIMEOUT"
 )
 
 // Defaults applied when the corresponding environment variable is unset.
@@ -49,6 +54,12 @@ const (
 	// defaultListen matches the API container's internal port in
 	// docker/docker-compose.yml so the bundled web service can reach it.
 	defaultListen = ":8081"
+	// defaultQueryTimeout is the per-query statement timeout applied to every
+	// read-pool query. 5 s is generous for a well-indexed advisory search but
+	// still bounds the damage from an unexpectedly expensive query pattern. Set
+	// SECURITYPORTAL_QUERY_TIMEOUT=0 to disable if the operator has a very large
+	// corpus and needs longer scans (document it in your runbook).
+	defaultQueryTimeout = 5 * time.Second
 )
 
 // defaultPublishableTLP is the conservative publish policy applied when
@@ -75,6 +86,9 @@ type Config struct {
 	// CORSOrigins lists the browser origins permitted to call the API. Empty
 	// means no CORS headers are emitted.
 	CORSOrigins []string
+	// QueryTimeout is the per-query statement timeout applied by the read pool.
+	// A value of 0 disables the timeout (not recommended). See EnvQueryTimeout.
+	QueryTimeout time.Duration
 }
 
 // Load reads the configuration from the environment, applying defaults for
@@ -86,6 +100,7 @@ func Load() (*Config, error) {
 		PollInterval:   defaultPollInterval,
 		DatabaseDSN:    os.Getenv(EnvDatabaseDSN),
 		Listen:         defaultListen,
+		QueryTimeout:   defaultQueryTimeout,
 	}
 
 	if raw := os.Getenv(EnvListen); raw != "" {
@@ -113,6 +128,17 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("%s must be a positive duration, got %q", EnvPollInterval, raw)
 		}
 		cfg.PollInterval = interval
+	}
+
+	if raw := os.Getenv(EnvQueryTimeout); raw != "" {
+		timeout, err := time.ParseDuration(raw)
+		if err != nil {
+			return nil, fmt.Errorf("parsing %s: %w", EnvQueryTimeout, err)
+		}
+		if timeout < 0 {
+			return nil, fmt.Errorf("%s must be >= 0 (use 0 to disable), got %q", EnvQueryTimeout, raw)
+		}
+		cfg.QueryTimeout = timeout
 	}
 
 	return cfg, nil
@@ -247,5 +273,6 @@ func (c *Config) Log() {
 		"database_configured", c.DatabaseDSN != "",
 		"listen", c.Listen,
 		"cors_origins", strings.Join(c.CORSOrigins, ","),
+		"query_timeout", c.QueryTimeout.String(),
 	)
 }

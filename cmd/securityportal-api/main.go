@@ -82,10 +82,12 @@ func main() {
 
 // runIngest performs one complete persisting ingestion cycle over the provider
 // feeds (fetch + verify + TLP gate + upsert + deletion sweep) and exits.
+// The query timeout is not applied here: ingestion writes are short-lived, but
+// the sweep transaction over a large corpus could take longer than the read timeout.
 func runIngest(cfg *config.Config) error {
 	ctx := context.Background()
 
-	db, err := database.NewDB(ctx, cfg.DatabaseDSN)
+	db, err := database.NewDB(ctx, cfg.DatabaseDSN, 0)
 	if err != nil {
 		return err
 	}
@@ -103,11 +105,12 @@ func runIngest(cfg *config.Config) error {
 // runPoll applies pending migrations and then runs the ingestion poll loop until
 // the process receives SIGINT or SIGTERM, at which point the context is
 // cancelled and the loop shuts down cleanly between (or during) cycles.
+// The query timeout is not applied to the ingest pool for the same reason as runIngest.
 func runPoll(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	db, err := database.NewDB(ctx, cfg.DatabaseDSN)
+	db, err := database.NewDB(ctx, cfg.DatabaseDSN, 0)
 	if err != nil {
 		return err
 	}
@@ -131,11 +134,18 @@ func runPoll(cfg *config.Config) error {
 // context that cancels on signal, so a graceful shutdown drains in-flight HTTP
 // requests and stops the poller between cycles. If either worker fails fatally,
 // the shared context is cancelled so the other stops too.
+//
+// The statement timeout (cfg.QueryTimeout, default 5 s) is applied to the shared
+// pool so expensive read queries (ListAdvisories, ComputeFacets, GetDocument) are
+// cancelled and return a clean error rather than hanging indefinitely. Ingestion
+// writes in the same pool are also bounded; at 5 s that is well above the expected
+// per-document write time but avoids a runaway sweep from blocking the whole pool
+// (see threat model C-7 / R-4).
 func runServe(cfg *config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	db, err := database.NewDB(ctx, cfg.DatabaseDSN)
+	db, err := database.NewDB(ctx, cfg.DatabaseDSN, cfg.QueryTimeout)
 	if err != nil {
 		return err
 	}
@@ -174,10 +184,12 @@ func runServe(cfg *config.Config) error {
 }
 
 // runMigrate connects to the database and applies all pending schema migrations.
+// No statement timeout is set: DDL statements on a large schema may take longer
+// than the read-path default, and this command is operator-invoked, not public.
 func runMigrate(cfg *config.Config) error {
 	ctx := context.Background()
 
-	db, err := database.NewDB(ctx, cfg.DatabaseDSN)
+	db, err := database.NewDB(ctx, cfg.DatabaseDSN, 0)
 	if err != nil {
 		return err
 	}

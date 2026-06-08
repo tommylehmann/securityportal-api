@@ -13,7 +13,9 @@ package database
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,11 +26,38 @@ type DB struct {
 }
 
 // NewDB creates a connection pool from the given PostgreSQL DSN.
-func NewDB(ctx context.Context, dsn string) (*DB, error) {
+//
+// queryTimeout is the per-statement timeout enforced on every pooled connection.
+// A positive value sets PostgreSQL's statement_timeout session variable each time
+// a connection is acquired (C-7 / R-4: DoS guard against slow advisory queries).
+// A zero value disables the timeout; negative values are rejected.
+func NewDB(ctx context.Context, dsn string, queryTimeout time.Duration) (*DB, error) {
+	if queryTimeout < 0 {
+		return nil, fmt.Errorf("queryTimeout must be >= 0, got %s", queryTimeout)
+	}
+
 	cc, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parsing database DSN: %w", err)
 	}
+
+	if queryTimeout > 0 {
+		// Wire a BeforeAcquire hook so every connection pulled from the pool carries
+		// the operator-configured statement_timeout. This protects every read query
+		// (ListAdvisories, ComputeFacets, GetDocument) against an expensive full-scan
+		// or deep-offset that would otherwise run until the client disconnects.
+		//
+		// The timeout is expressed in milliseconds because that is what Postgres
+		// expects as a plain integer (a trailing unit is also accepted, but the
+		// integer path avoids locale-formatting issues).
+		timeoutMS := queryTimeout.Milliseconds()
+		cc.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
+			_, err := conn.Exec(ctx,
+				fmt.Sprintf("SET statement_timeout = %d", timeoutMS))
+			return err == nil
+		}
+	}
+
 	pool, err := pgxpool.NewWithConfig(ctx, cc)
 	if err != nil {
 		return nil, fmt.Errorf("creating postgresql pool: %w", err)

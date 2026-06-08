@@ -205,3 +205,62 @@ func contains(s []string, v string) bool {
 	}
 	return false
 }
+
+// ---------------------------------------------------------------------------
+// C-4 / SA-18 — API security headers (task 22 hardening)
+// securityHeaders() middleware must be present on every response produced by
+// the wired handler (NewController(...).Handler()), not just in isolation.
+// ---------------------------------------------------------------------------
+
+func TestSecurityHeaderNosniffOnHealth(t *testing.T) {
+	rec := doRequest(t, &fakeQuerier{lastIngestOK: false}, http.MethodGet, "/api/health")
+	got := rec.Header().Get("X-Content-Type-Options")
+	if got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+	}
+}
+
+func TestSecurityHeaderNosniffOnAdvisoryList(t *testing.T) {
+	q := &fakeQuerier{list: database.AdvisoryList{Total: 0}}
+	rec := doRequest(t, q, http.MethodGet, "/api/advisories")
+	got := rec.Header().Get("X-Content-Type-Options")
+	if got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+	}
+}
+
+func TestSecurityHeaderNosniffOnDocumentEndpoint(t *testing.T) {
+	raw := []byte(`{"document":{"title":"test"}}`)
+	q := &fakeQuerier{doc: raw}
+	rec := doRequest(t, q, http.MethodGet, "/api/documents/1")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	// SA-18: nosniff must be present on the document endpoint — CSAF JSON must
+	// never be re-interpreted as text/html by a browser, which could enable XSS
+	// if the content happened to include HTML-like text.
+	got := rec.Header().Get("X-Content-Type-Options")
+	if got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+	}
+	// The Content-Type must be application/json (never text/html).
+	ct := rec.Header().Get("Content-Type")
+	if ct != "application/json; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want %q", ct, "application/json; charset=utf-8")
+	}
+}
+
+func TestSecurityHeaderNosniffOnNotFound(t *testing.T) {
+	// Even 404 responses must carry the header — the middleware fires before
+	// any response is written and must not be bypassed by early returns.
+	q := &fakeQuerier{docErr: database.ErrDocumentNotFound}
+	rec := doRequest(t, q, http.MethodGet, "/api/documents/999")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	got := rec.Header().Get("X-Content-Type-Options")
+	if got != "nosniff" {
+		t.Errorf("X-Content-Type-Options = %q, want %q", got, "nosniff")
+	}
+}

@@ -9,6 +9,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -24,6 +25,13 @@ import (
 const (
 	defaultLimit = 25
 	maxLimit     = 100
+	// maxOffset is the maximum pagination offset accepted by the list endpoints.
+	// Deep offsets (e.g. OFFSET 999999) force Postgres to scan and discard a large
+	// number of rows even on indexed queries, making them an effective DoS vector
+	// on a public API. Requests exceeding this bound are rejected with a 400 rather
+	// than silently clamped so callers receive an unambiguous signal to use
+	// cursor-based pagination instead (threat model C-7 / R-4).
+	maxOffset = 10000
 )
 
 // healthResponse is the body of GET /api/health. Status is "ok" when the
@@ -141,6 +149,13 @@ func parseListOptions(ctx *gin.Context) (database.ListOptions, bool) {
 		offset, err := strconv.Atoi(raw)
 		if err != nil || offset < 0 {
 			badRequest(ctx, "invalid offset")
+			return opts, false
+		}
+		// Reject deep offsets rather than silently clamping: a caller that sends
+		// offset=999999 needs to know to switch to cursor/keyset pagination, not
+		// silently receive results from the clamped boundary.
+		if offset > maxOffset {
+			badRequest(ctx, fmt.Sprintf("offset exceeds maximum (%d); use cursor pagination for deep pages", maxOffset))
 			return opts, false
 		}
 		opts.Offset = offset

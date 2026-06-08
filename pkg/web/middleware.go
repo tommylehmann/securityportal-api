@@ -46,6 +46,39 @@ func requestLogger() gin.HandlerFunc {
 	}
 }
 
+// securityHeaders applies the baseline security headers to every API response
+// (threat model control C-4 / SA-18).
+//
+//   - X-Content-Type-Options: nosniff prevents browsers from MIME-sniffing an
+//     API JSON response away from the declared Content-Type. This is important for
+//     /api/documents/:id: the CSAF JSON is served with application/json and must
+//     never be re-interpreted as text/html, which could allow script execution if
+//     the stored content happened to contain HTML.
+//
+// Note: HSTS is the reverse proxy's responsibility and is not set here (see
+// threat model §1 and decisions/0006-content-security-policy.md).
+func securityHeaders() gin.HandlerFunc {
+	return func(ctx *gin.Context) {
+		ctx.Header("X-Content-Type-Options", "nosniff")
+		ctx.Next()
+	}
+}
+
+// NOTE — rate limiting (threat model C-7 / R-4):
+//
+// IP-level rate limiting is the reverse proxy's responsibility and is not
+// implemented here. The in-process DoS guards are:
+//   1. offset cap (maxOffset = 10000 in handlers.go) — expensive deep-page requests
+//      are rejected with a 400 before they reach the database.
+//   2. statement timeout (cfg.QueryTimeout, default 5 s) — any SQL query that
+//      runs past the deadline is cancelled by Postgres; the handler returns a 500.
+//
+// Operators should configure their reverse proxy (nginx, Caddy, Traefik, etc.) to
+// enforce per-IP request-rate limits and to set an overall connection limit before
+// requests reach this service. Those controls live outside the application and are
+// not duplicated here to avoid adding a stateful in-memory data structure that
+// would require additional care in a multi-process deployment.
+
 // corsMiddleware returns a handler that permits cross-origin GET requests from
 // the configured origins. Because the API is read-only, only simple GET/HEAD
 // requests and the corresponding preflight are allowed; no credentials, no

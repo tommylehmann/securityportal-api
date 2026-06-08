@@ -1,0 +1,92 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Security scanning workflow for securityportal-api (C-6 / SA-16).
+#
+# Runs on every push and pull request to main, and on a weekly schedule so
+# newly-published advisories for unchanged code are caught promptly.
+#
+# Jobs:
+#   vuln    — govulncheck: known-vuln scan over reachable symbols.
+#   sbom    — CycloneDX SBOM generation (cyclonedx-gomod app); artifact uploaded.
+#
+# Rate limiting / DoS guards (C-7) are implemented in-process (statement timeout
+# + offset cap) and at the reverse proxy level; they do not gate this workflow.
+
+name: Security — API
+
+on:
+  push:
+    branches: ["main", "master"]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/security.yml"
+  pull_request:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/security.yml"
+  schedule:
+    # Weekly on Monday 06:00 UTC — catches newly-published advisories.
+    - cron: "0 6 * * 1"
+
+jobs:
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          # go.mod requires >= 1.26.4; use the patched toolchain to ensure the
+          # stdlib vulns fixed in 1.26.1–1.26.4 are not reachable in CI either.
+          go-version-file: go.mod
+
+      - name: govulncheck
+        # govulncheck performs symbol-level reachability analysis: it only flags
+        # vulnerabilities in code paths that are actually called by this binary.
+        # Zero reachable vulnerabilities is the gate; non-reachable findings in
+        # indirect deps are reported but do not fail the job.
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install cyclonedx-gomod
+        # cyclonedx-gomod generates a CycloneDX SBOM from go.mod/go.sum.
+        # The "app" sub-command includes only modules reachable from the binary
+        # entrypoint, which is the correct scope for a deployed artifact.
+        run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+
+      - name: Generate SBOM
+        run: |
+          cyclonedx-gomod app \
+            -main ./cmd/securityportal-api \
+            -output securityportal-api-sbom.cdx.json \
+            -json
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: securityportal-api-sbom
+          path: securityportal-api-sbom.cdx.json
+          retention-days: 90

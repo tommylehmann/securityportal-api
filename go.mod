@@ -7,14 +7,14 @@
 
 module github.com/securityportal/securityportal-api
 
-go 1.26.0
+go 1.26.4
 
 require (
 	github.com/ProtonMail/gopenpgp/v2 v2.10.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gocsaf/csaf/v3 v3.5.1
 	github.com/jackc/pgx/v5 v5.9.1
-	golang.org/x/sync v0.19.0
+	golang.org/x/sync v0.20.0
 )
 
 require (
@@ -54,10 +54,10 @@ require (
 	go.etcd.io/bbolt v1.4.3 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
-	golang.org/x/net v0.51.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/crypto v0.50.0 // indirect
+	golang.org/x/net v0.53.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )

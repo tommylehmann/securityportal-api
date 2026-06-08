@@ -62,6 +62,7 @@ func (c *Controller) Handler() http.Handler {
 	router := gin.New()
 	router.Use(gin.Recovery())
 	router.Use(requestLogger())
+	router.Use(securityHeaders())
 	if cors := corsMiddleware(c.cfg.CORSOrigins); cors != nil {
 		router.Use(cors)
 	}

@@ -6,7 +6,8 @@
 # SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 # Build the securityportal-api binary.
-FROM library/golang:1.26.0-alpine AS build
+# Pin to the same minor version as go.mod; update this when go.mod toolchain advances.
+FROM library/golang:1.26.4-alpine AS build
 # CA certificates are needed to pull advisories from the HTTPS Trusted Provider.
 RUN apk add -U --no-cache ca-certificates && update-ca-certificates
 

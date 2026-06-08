@@ -45,7 +45,7 @@ func newAPIHarness(t *testing.T) *apiHarness {
 	if err := database.Migrate(ctx, pool); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	db, err := database.NewDB(ctx, dsn)
+	db, err := database.NewDB(ctx, dsn, 0)
 	if err != nil {
 		t.Fatalf("NewDB: %v", err)
 	}

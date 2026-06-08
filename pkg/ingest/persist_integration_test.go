@@ -33,7 +33,7 @@ import (
 func migratedStore(t *testing.T) (*database.DB, *pgxpool.Pool, context.Context) {
 	t.Helper()
 	pool, dsn, ctx := dbtest.StartPostgres(t)
-	db, err := database.NewDB(ctx, dsn)
+	db, err := database.NewDB(ctx, dsn, 0)
 	if err != nil {
 		t.Fatalf("opening DB: %v", err)
 	}
