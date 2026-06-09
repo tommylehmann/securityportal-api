@@ -37,7 +37,12 @@ services:
       SECURITYPORTAL_PROVIDER_URL: ${SECURITYPORTAL_PROVIDER_URL}
       SECURITYPORTAL_PUBLISHABLE_TLP: ${SECURITYPORTAL_PUBLISHABLE_TLP}
       SECURITYPORTAL_POLL_INTERVAL: ${SECURITYPORTAL_POLL_INTERVAL}
-      SECURITYPORTAL_DATABASE_DSN: ${SECURITYPORTAL_DATABASE_DSN}
+      # DSN is derived from the POSTGRES_* vars above by default.
+      # Set SECURITYPORTAL_DATABASE_DSN explicitly only when you need to
+      # override the auto-derived value — e.g. an external (non-bundled) DB
+      # host, or a password that contains URL-reserved characters that require
+      # percent-encoding (RFC 3986 §2.1).
+      SECURITYPORTAL_DATABASE_DSN: "${SECURITYPORTAL_DATABASE_DSN:-postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?sslmode=disable}"
       SECURITYPORTAL_LISTEN: ":8081"
       # Same-origin deployment via Caddy: CORS headers are not needed because the
       # browser always talks to Caddy (same origin), not the API directly.

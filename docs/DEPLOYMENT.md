@@ -99,10 +99,15 @@ SECURITYPORTAL_CORS_ORIGINS=
 SECURITYPORTAL_QUERY_TIMEOUT=5s
 
 # --- Database ---
+# Set POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB.
+# The API's SECURITYPORTAL_DATABASE_DSN is auto-derived from these three vars
+# by docker-compose.yml, so you do NOT need to set it separately.
+# Only set SECURITYPORTAL_DATABASE_DSN explicitly if you need to override the
+# default — e.g. an external (non-bundled) DB host, or a password containing
+# URL-reserved characters that require percent-encoding (RFC 3986 §2.1).
 POSTGRES_USER=securityportal
 POSTGRES_PASSWORD=YOUR_GENERATED_PASSWORD_HERE
 POSTGRES_DB=securityportal
-SECURITYPORTAL_DATABASE_DSN=postgres://securityportal:YOUR_GENERATED_PASSWORD_HERE@db:5432/securityportal?sslmode=disable
 
 # --- Caddy reverse proxy (Phase 7) ---
 # Public hostname for the site. "localhost" = self-signed TLS (default).

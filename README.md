@@ -67,7 +67,7 @@ All settings are environment variables (no config files or secrets in source). T
 | `SECURITYPORTAL_CORS_ORIGINS` | (empty) | Comma-separated browser origins allowed to call the API cross-origin (e.g., `https://portal.example.com`). Leave empty (or unset) in same-origin deployments (Compose via Caddy, Kubernetes via Ingress) where the browser never talks to the API directly; CSP handles it. Only set for non-proxy deploys where the frontend is separate or cross-origin. |
 | `SECURITYPORTAL_QUERY_TIMEOUT` | `5s` | Per-query statement timeout (Go duration syntax). Protects against expensive searches and DoS via Postgres (threat model C-7 / R-4). Set to `0` to disable (not recommended for production). |
 | **Database** | | |
-| `SECURITYPORTAL_DATABASE_DSN` | (required) | PostgreSQL connection string, e.g. `postgres://user:pass@localhost:5432/securityportal?sslmode=disable`. This is a **secret**; never log it verbatim or commit it to source. |
+| `SECURITYPORTAL_DATABASE_DSN` | (required) | PostgreSQL connection string, e.g. `postgres://user:pass@localhost:5432/securityportal?sslmode=disable`. This is a **secret**; never log it verbatim or commit it to source. **Docker Compose:** auto-derived from `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`; only set this explicitly to override (e.g. external DB host or URL-encoded password). **Bare-metal:** must be set by the operator (no Postgres container to derive from). |
 
 ### Web + portal configuration (SvelteKit frontend, Phase 7)
 
