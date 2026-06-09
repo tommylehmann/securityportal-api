@@ -87,6 +87,33 @@ add nginx `ConfigurationSnippets` that re-emit `Content-Security-Policy`,
 `X-Frame-Options`, `Referrer-Policy`, or `Permissions-Policy` — that would
 duplicate or override the app's values.
 
+### Rate limiting (C-14 / SA-26)
+
+IP-based rate limiting is **not enforced by the bare Ingress resource** — a
+plain `networking.k8s.io/v1 Ingress` object has no rate-limiting fields.
+Enforcement is the Ingress controller's responsibility, matching the same
+boundary that Caddy owns on the Docker Compose target.
+
+**Configure rate limiting via your controller:**
+
+- **ingress-nginx** — add `nginx.ingress.kubernetes.io/limit-rps` and
+  `nginx.ingress.kubernetes.io/limit-connections` to `ingress.annotations`.
+  See the commented examples in `values.yaml` (`ingress.annotations` section)
+  for values aligned with the Compose target's 60 req/min/IP default.
+- **Traefik** — create a `Middleware` CR with a `rateLimit` stanza and
+  reference it via `traefik.ingress.kubernetes.io/router.middlewares`.  A
+  ready-to-use object template is in the `values.yaml` comments.
+- **Cloud load-balancer ingress classes** (GKE native, AWS ALB, etc.) — these
+  controllers do not support annotation-based IP rate limiting.  To satisfy
+  C-14 / SA-26 on those platforms you must configure an external WAF
+  (Google Cloud Armor, AWS WAF, or equivalent) in front of the Ingress.
+
+Regardless of which proxy-layer control is in place, the application retains
+its own in-process guards (C-7): per-query statement timeout
+(`SECURITYPORTAL_QUERY_TIMEOUT`) and the pagination offset cap on
+`/api/advisories`.  These complement, but do not replace, the proxy-layer
+rate limit.
+
 ### Secrets vs ConfigMap (SA-13 / ADR-0012)
 
 | What | Where |
