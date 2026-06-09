@@ -68,6 +68,32 @@ services:
       # Same-origin deployment: PUBLIC_API_BASE_URL is empty so the browser
       # issues relative /api/... requests, which Caddy routes to api:8081.
       PUBLIC_API_BASE_URL: ""
+      # --- Branding (optional, spec §16.2 / §16.9) ---
+      # Pass-through from host env / .env with empty default so an unset var
+      # keeps the application's built-in default (runtime-config.ts trims and
+      # treats an empty string as "unset", identical to the var being absent).
+      # These mirror the Helm chart values.yaml branding knobs (ADR-0012).
+      SECURITYPORTAL_BRAND_NAME: "${SECURITYPORTAL_BRAND_NAME:-}"
+      SECURITYPORTAL_BRAND_SUBTITLE: "${SECURITYPORTAL_BRAND_SUBTITLE:-}"
+      SECURITYPORTAL_THEME_PRIMARY: "${SECURITYPORTAL_THEME_PRIMARY:-}"
+      SECURITYPORTAL_THEME_PRIMARY_FG: "${SECURITYPORTAL_THEME_PRIMARY_FG:-}"
+      SECURITYPORTAL_THEME_ACCENT: "${SECURITYPORTAL_THEME_ACCENT:-}"
+      # Operator-supplied logo path inside the container.
+      # Set to e.g. /srv/branding/logo.svg when a logo is placed in the
+      # branding directory below.  Unset (empty) → built-in icon glyph.
+      SECURITYPORTAL_LOGO_PATH: "${SECURITYPORTAL_LOGO_PATH:-}"
+      # Directory inside the container where legal Markdown files are mounted.
+      # The page server reads ${SECURITYPORTAL_LEGAL_DIR}/impressum.{de,en}.md
+      # and datenschutz.{de,en}.md; missing files fall back to the i18n
+      # placeholder — no error is raised (spec §16.4).
+      SECURITYPORTAL_LEGAL_DIR: "/srv/branding/legal"
+    volumes:
+      # Optional read-only branding directory.  The host path defaults to
+      # ./branding (relative to the docker/ directory); override SP_BRANDING_DIR
+      # in .env to point at an arbitrary host path (e.g. /opt/securityportal/branding).
+      # The docker/branding/ skeleton ships with an empty legal/ subdirectory so
+      # this mount exists and works out-of-the-box even when no files are placed here.
+      - ${SP_BRANDING_DIR:-./branding}:/srv/branding:ro
     # No host-port publish: web is only reachable through Caddy (SA-21).
     depends_on:
       - api

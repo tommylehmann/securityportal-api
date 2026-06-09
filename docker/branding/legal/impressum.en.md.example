@@ -1,0 +1,28 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+Example imprint (English) — copy to impressum.en.md and fill in real details.
+Content is sanitized per ADR-0010 before rendering (no raw HTML, no scripts).
+Maximum file size: 512 KiB.
+-->
+
+# Legal Notice / Imprint
+
+## Provider Information
+
+**Example Organisation GmbH**
+Example Street 1
+12345 Example City
+Germany
+
+## Contact
+
+Phone: +49 (0) 123 456789
+E-Mail: psirt@example.com
+
+## Responsible for Content
+
+First Last
+Example Street 1
+12345 Example City

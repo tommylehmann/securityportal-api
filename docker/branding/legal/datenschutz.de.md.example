@@ -1,0 +1,33 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+Example Datenschutzerklärung (German) — copy to datenschutz.de.md and fill in real details.
+Content is sanitized per ADR-0010 before rendering (no raw HTML, no scripts).
+Maximum file size: 512 KiB.
+-->
+
+# Datenschutzerklärung
+
+## 1. Datenschutz auf einen Blick
+
+### Allgemeine Hinweise
+
+Die folgenden Hinweise geben einen einfachen Überblick darüber, was mit Ihren
+personenbezogenen Daten passiert, wenn Sie diese Website besuchen.
+Personenbezogene Daten sind alle Daten, mit denen Sie persönlich identifiziert
+werden können.
+
+### Datenerfassung auf dieser Website
+
+**Wer ist verantwortlich für die Datenerfassung auf dieser Website?**
+
+Die Datenverarbeitung auf dieser Website erfolgt durch den Websitebetreiber.
+Dessen Kontaktdaten können Sie dem Impressum dieser Website entnehmen.
+
+## 2. Verantwortlicher
+
+Musterorganisation GmbH
+Musterstraße 1
+12345 Musterstadt
+E-Mail: datenschutz@example.com

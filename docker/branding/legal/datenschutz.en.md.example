@@ -1,0 +1,32 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+Example privacy policy (English) — copy to datenschutz.en.md and fill in real details.
+Content is sanitized per ADR-0010 before rendering (no raw HTML, no scripts).
+Maximum file size: 512 KiB.
+-->
+
+# Privacy Policy
+
+## 1. Privacy at a Glance
+
+### General Information
+
+The following notes provide a simple overview of what happens to your personal
+data when you visit this website.  Personal data is any data by which you can be
+personally identified.
+
+### Data Collection on This Website
+
+**Who is responsible for data collection on this website?**
+
+Data processing on this website is carried out by the website operator.
+You can find their contact details in the legal notice (Impressum) of this website.
+
+## 2. Controller
+
+Example Organisation GmbH
+Example Street 1
+12345 Example City
+E-Mail: privacy@example.com

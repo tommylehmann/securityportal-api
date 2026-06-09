@@ -137,53 +137,98 @@ docker compose config
 # Should print the resolved services (db, api, web) with all env values filled in
 ```
 
-### Branding (optional, Phase 7)
+### Branding and legal pages (optional)
 
-To customize the portal's appearance without rebuilding the container:
+All branding and legal customisation is done through environment variables and a
+single host directory — no image rebuild is required.  This is parity with the
+Helm chart's `branding`, `legalContent`, and `logo` values (all three deployment
+targets share the same `SECURITYPORTAL_*` env-var and mount contract per
+ADR-0012).
 
-**Brand name and subtitle** — add to `.env`:
-```bash
-SECURITYPORTAL_BRAND_NAME="Your Organization PSIRT"
-SECURITYPORTAL_BRAND_SUBTITLE="Security Advisory Portal"
-```
+#### How it works
 
-**Primary color** — hex or RGB decimal (e.g., `#b91c1c` or `185 28 28`):
-```bash
-SECURITYPORTAL_THEME_PRIMARY="#b91c1c"
-# or
-SECURITYPORTAL_THEME_PRIMARY="185 28 28"
-```
-
-**Logo** — place an SVG, PNG, or WebP file on the host, then bind-mount it and set the path:
-```bash
-# 1. Prepare the file (e.g., /opt/securityportal/branding/logo.png)
-# 2. Add to docker-compose.override.yml or edit docker-compose.yml:
-web:
-  volumes:
-    - /opt/securityportal/branding/logo.png:/config/logo.png:ro
-  environment:
-    SECURITYPORTAL_LOGO_PATH: /config/logo.png
-```
-
-**Legal pages (Markdown)** — place `impressum.de.md`, `impressum.en.md`, `datenschutz.de.md`, `datenschutz.en.md` in a directory on the host, bind-mount it, and set the path. Each file supports Markdown (headings, lists, tables, safe links). Content is sanitized at render time (no inline HTML, no scripts). When files are missing the portal shows placeholders (required for German compliance):
+The `web` service mounts a host directory (default: `docker/branding/`) at
+`/srv/branding` inside the container (read-only).  Drop your logo and legal
+Markdown files there, set the relevant vars in `.env`, and restart the web
+service:
 
 ```bash
-# 1. Create the directory structure:
-/opt/securityportal/legal/
-  ├── impressum.de.md       # German company/contact info
-  ├── impressum.en.md       # English imprint
-  ├── datenschutz.de.md     # German privacy policy
-  └── datenschutz.en.md     # English privacy policy
-
-# 2. Add to docker-compose.override.yml:
-web:
-  volumes:
-    - /opt/securityportal/legal:/config/legal:ro
-  environment:
-    SECURITYPORTAL_LEGAL_DIR: /config/legal
+docker compose up -d --no-deps web
 ```
 
-See the web README (§Configuration, "Legal content") for the full Markdown + sanitization reference.
+#### Env vars
+
+All vars are optional.  An unset or empty value keeps the built-in default
+(`runtime-config.ts` trims each value and treats empty/whitespace as "unset").
+
+| Variable | Default | Description |
+|---|---|---|
+| `SP_BRANDING_DIR` | `./branding` | Host path of the branding directory (relative to `docker/`). |
+| `SECURITYPORTAL_BRAND_NAME` | _(i18n key)_ | Navigation header brand name. |
+| `SECURITYPORTAL_BRAND_SUBTITLE` | _(i18n key)_ | Navigation subtitle. |
+| `SECURITYPORTAL_THEME_PRIMARY` | _(sky-blue)_ | Primary color as `#rrggbb` or `R G B` channel triple. A full ramp is derived from this single value. Invalid values are logged and ignored. |
+| `SECURITYPORTAL_THEME_PRIMARY_FG` | _(derived)_ | Text color on primary-colored surfaces. |
+| `SECURITYPORTAL_THEME_ACCENT` | _(derived)_ | Accent color override. |
+| `SECURITYPORTAL_LOGO_PATH` | _(unset)_ | Container-internal path to the logo file, e.g. `/srv/branding/logo.svg`. Unset → built-in glyph. |
+
+`SECURITYPORTAL_LEGAL_DIR` is always set to `/srv/branding/legal` by the Compose
+file; you do not need to set it in `.env`.
+
+#### Branding directory layout
+
+```
+docker/branding/           ← default SP_BRANDING_DIR (ships with the repo)
+├── README.md
+├── logo.svg               ← drop your logo here (svg/png/webp)
+└── legal/
+    ├── impressum.de.md    ← German Impressum
+    ├── impressum.en.md    ← English imprint
+    ├── datenschutz.de.md  ← German Datenschutzerklärung
+    └── datenschutz.en.md  ← English privacy policy
+```
+
+Template files are provided as `*.md.example` in `docker/branding/legal/`:
+
+```bash
+cd docker/branding/legal
+cp impressum.de.md.example impressum.de.md
+# edit with real company/contact information
+```
+
+The branding directory ships with an empty `legal/` subdirectory so the default
+bind-mount works out of the box.  Missing legal files never cause an error — the
+portal shows the built-in i18n placeholder and an amber banner prompting the
+operator to add the files.
+
+#### Legal Markdown format
+
+Files must be named exactly `<page>.<locale>.md`:
+- Pages: `impressum`, `datenschutz`
+- Locales: `de`, `en`
+
+Content is sanitized at render time per ADR-0010: only standard block/inline
+text elements, tables, and `<a href>` links survive.  Inline HTML, `<script>`,
+`<iframe>`, `<img>`, `<svg>`, and `<object>` tags are stripped.  Link `href`
+values are validated against an allow-list of safe URL schemes (ADR-0007).
+Maximum file size: 512 KiB.
+
+The portal falls back in order: (1) visitor's locale file → (2) other locale
+file → (3) built-in placeholder.  No 500 is ever raised.
+
+#### Using a different host path
+
+To use a path outside the repo (e.g. `/opt/securityportal/branding`), set
+`SP_BRANDING_DIR` in `.env`:
+
+```dotenv
+SP_BRANDING_DIR=/opt/securityportal/branding
+SECURITYPORTAL_LOGO_PATH=/srv/branding/logo.svg
+```
+
+The container-internal path (`/srv/branding`) is fixed; only the host side
+changes.
+
+See the web README (§Configuration, "Branding") for the full reference.
 
 ## Step 2: First-time setup
 

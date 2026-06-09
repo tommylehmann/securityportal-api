@@ -1,0 +1,28 @@
+<!--
+SPDX-License-Identifier: Apache-2.0
+SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+Example Impressum (German) — copy to impressum.de.md and fill in real details.
+Content is sanitized per ADR-0010 before rendering (no raw HTML, no scripts).
+Maximum file size: 512 KiB.
+-->
+
+# Impressum
+
+## Angaben gemäß § 5 TMG
+
+**Musterorganisation GmbH**
+Musterstraße 1
+12345 Musterstadt
+Deutschland
+
+## Kontakt
+
+Telefon: +49 (0) 123 456789
+E-Mail: psirt@example.com
+
+## Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV
+
+Vorname Nachname
+Musterstraße 1
+12345 Musterstadt
