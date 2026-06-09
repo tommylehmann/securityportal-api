@@ -20,6 +20,11 @@ go.work.sum
 .env
 docker/.env
 
+# Operator-provided runtime branding content (the *.md.example templates,
+# README.md and .gitkeep stay tracked; real legal text and logos do not).
+docker/branding/legal/*.md
+docker/branding/logo.*
+
 # Editor / OS noise
 .DS_Store
 *.swp
