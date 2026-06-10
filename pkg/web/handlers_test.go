@@ -39,6 +39,13 @@ type fakeQuerier struct {
 	doc            []byte
 	docErr         error
 	gotDocID       int64
+	// Fields used by GetByPublisherTrackingID (and shared by tests that previously
+	// exercised the now-removed flat GetByTrackingID route).
+	trackingDoc         []byte
+	trackingWithdrawn   bool
+	trackingWithdrawnAt *time.Time
+	trackingErr         error
+	gotTrackingID       string
 }
 
 func (f *fakeQuerier) Ping(context.Context) error { return f.pingErr }
@@ -69,6 +76,16 @@ func (f *fakeQuerier) GetDocument(
 	f.gotDocID = id
 	f.gotPublishable = publishable
 	return f.doc, f.docErr
+}
+
+func (f *fakeQuerier) GetByPublisherTrackingID(
+	_ context.Context, publisher, trackingID string, publishable []string,
+) ([]byte, bool, *time.Time, error) {
+	// Reuse the same tracking fields so existing handler tests can drive both
+	// the flat and the publisher-scoped handler through the same fakeQuerier.
+	f.gotTrackingID = trackingID
+	f.gotPublishable = publishable
+	return f.trackingDoc, f.trackingWithdrawn, f.trackingWithdrawnAt, f.trackingErr
 }
 
 // testConfig is a minimal config with the default publishable-TLP policy.

@@ -235,12 +235,14 @@ func (db *DB) ListAdvisories(
 	return AdvisoryList{Advisories: advisories, Total: total}, nil
 }
 
-// ErrDocumentNotFound is returned by GetDocument when no publishable document
-// with the given id exists. A non-publishable-TLP document is reported as not
-// found rather than forbidden so the API never confirms the existence of a
-// restricted document (spec §12). A withdrawn advisory's document IS still
-// served: permalink stability is intentional, and the "no longer published"
-// notice is a later frontend concern driven by advisory metadata.
+// ErrDocumentNotFound is returned by GetDocument, GetByTrackingID, and
+// GetByPublisherTrackingID when no publishable document with the given
+// identifier exists. A non-publishable-TLP document is reported as not found
+// rather than forbidden so the API never confirms the existence of a restricted
+// document (spec §12, C-16, SA-28/SA-41). The numeric endpoint (/documents/:id)
+// is retained as an internal/revision endpoint; the public permalinks are
+// GetByPublisherTrackingID (ADR-0016) for the publisher-scoped form and
+// GetByTrackingID (ADR-0013) kept for backwards-compatible internal use.
 var ErrDocumentNotFound = fmt.Errorf("document not found")
 
 // GetDocument returns the stored CSAF JSON bytes for one document revision,
@@ -249,7 +251,8 @@ var ErrDocumentNotFound = fmt.Errorf("document not found")
 // publishableTLP. The bytes are produced by Postgres from the jsonb column, so
 // they are valid JSON but canonicalised (whitespace/key order may differ from
 // the originally downloaded file); this is the document the webview consumes via
-// convertToDocModel.
+// convertToDocModel. This is the internal/revision-level endpoint; the public
+// permalink endpoint is GetByTrackingID (ADR-0013).
 func (db *DB) GetDocument(ctx context.Context, id int64, publishableTLP []string) ([]byte, error) {
 	const query = `
 		SELECT document::text
@@ -264,5 +267,94 @@ func (db *DB) GetDocument(ctx context.Context, id int64, publishableTLP []string
 		return nil, ErrDocumentNotFound
 	default:
 		return nil, fmt.Errorf("reading document %d: %w", id, err)
+	}
+}
+
+// GetByTrackingID resolves an advisory's latest publishable document revision by
+// its CSAF tracking_id (ADR-0013, C-15/SA-27). The tracking_id is matched as a
+// bound parameter ($1) — no SQL interpolation — and the publishable TLP gate is
+// applied as $2::text[] (defense in depth, C-16/SA-28).
+//
+// When the advisory exists and is published, it returns the CSAF JSON bytes plus
+// withdrawn=false and withdrawnAt=nil. When the advisory is tombstoned
+// (withdrawn=true), it returns withdrawn=true and withdrawnAt with the timestamp;
+// the caller MUST NOT use raw in this case (C-17/SA-29) — the withdrawn advisory
+// still resolves (not 404) so the frontend can render the OQ-3 "no longer
+// published" notice (ADR-0013 §2).
+//
+// ErrDocumentNotFound is returned for an unknown tracking_id or one whose latest
+// document is not in publishableTLP; the two cases are deliberately indistinguishable
+// so no oracle exists for restricted documents (C-16/SA-28).
+//
+// ORDER BY a.id LIMIT 1 ensures a deterministic single-row result even if a
+// duplicate tracking_id hypothetically existed in v1 (C-23/SA-34).
+func (db *DB) GetByTrackingID(
+	ctx context.Context,
+	trackingID string,
+	publishableTLP []string,
+) (raw []byte, withdrawn bool, withdrawnAt *time.Time, err error) {
+	const query = `
+		SELECT d.document::text, a.withdrawn, a.withdrawn_at
+		FROM advisories a
+		JOIN documents d ON d.advisories_id = a.id AND d.latest
+		WHERE a.tracking_id = $1
+		  AND upper(d.tlp) = ANY($2::text[])
+		ORDER BY a.id LIMIT 1`
+	switch scanErr := db.pool.QueryRow(ctx, query, trackingID, publishableTLP).
+		Scan(&raw, &withdrawn, &withdrawnAt); {
+	case scanErr == nil:
+		return raw, withdrawn, withdrawnAt, nil
+	case scanErr == pgx.ErrNoRows:
+		return nil, false, nil, ErrDocumentNotFound
+	default:
+		return nil, false, nil, fmt.Errorf("reading advisory by tracking_id: %w", scanErr)
+	}
+}
+
+// GetByPublisherTrackingID resolves the latest publishable document revision for
+// the canonical (publisher, tracking_id) permalink (ADR-0016). Both publisher and
+// tracking_id are bound parameters ($1, $2) — no SQL interpolation — and the
+// publishable TLP gate ($3::text[]) is enforced in the JOIN condition (C-27/SA-39/
+// SA-40).
+//
+// Behaviour mirrors GetByTrackingID exactly, with the additional publisher
+// predicate:
+//   - withdrawn advisory → returns withdrawn=true and withdrawnAt; caller emits 410.
+//   - withdrawn advisory whose latest doc is non-publishable TLP → no row →
+//     ErrDocumentNotFound → handler emits 404 (SA-41/SA-51: the non-publishable 404
+//     wins over 410, preserving the no-oracle invariant for restricted documents).
+//   - unknown (publisher, tracking_id) → ErrDocumentNotFound.
+//
+// The schema enforces UNIQUE(tracking_id, publisher) so ORDER BY a.id LIMIT 1 is
+// a tiebreaker guard only; it costs nothing on the normally-unique case.
+//
+// Column alignment note (F6/ADR-0016): the list query and _links.self use
+// documents.publisher_name, while this resolver uses advisories.publisher. Both
+// columns are populated from /document/publisher/name at ingest time
+// (pkg/ingest/persist.go), so they agree for well-formed advisories. If a
+// publisher renames itself across revisions the two could diverge; the schema's
+// UNIQUE(tracking_id, publisher) key is on advisories.publisher, so the permalink
+// is always routed through that column.
+func (db *DB) GetByPublisherTrackingID(
+	ctx context.Context,
+	publisher, trackingID string,
+	publishableTLP []string,
+) (raw []byte, withdrawn bool, withdrawnAt *time.Time, err error) {
+	const query = `
+		SELECT d.document::text, a.withdrawn, a.withdrawn_at
+		FROM advisories a
+		JOIN documents d ON d.advisories_id = a.id AND d.latest
+		WHERE a.publisher = $1
+		  AND a.tracking_id = $2
+		  AND upper(d.tlp) = ANY($3::text[])
+		ORDER BY a.id LIMIT 1`
+	switch scanErr := db.pool.QueryRow(ctx, query, publisher, trackingID, publishableTLP).
+		Scan(&raw, &withdrawn, &withdrawnAt); {
+	case scanErr == nil:
+		return raw, withdrawn, withdrawnAt, nil
+	case scanErr == pgx.ErrNoRows:
+		return nil, false, nil, ErrDocumentNotFound
+	default:
+		return nil, false, nil, fmt.Errorf("reading advisory by publisher+tracking_id: %w", scanErr)
 	}
 }

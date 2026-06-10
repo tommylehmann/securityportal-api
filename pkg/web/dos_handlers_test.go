@@ -17,9 +17,9 @@ package web
 //   offset = maxOffset  → 200 (boundary is inclusive)
 //   normal small offset → 200
 //
-// Both the primary list route (/api/advisories) and the search alias
-// (/api/advisories/search) are covered because they share parseListOptions
-// and must behave identically.
+// Both the primary list route (/api/advisories) and the publisher-collection
+// route (/api/advisories/:publisher) are covered because they both call
+// parseListOptions and must enforce the same cap.
 
 import (
 	"encoding/json"
@@ -85,14 +85,14 @@ func TestOffsetCapAllowsNormalOffsetOnListEndpoint(t *testing.T) {
 	}
 }
 
-// TestOffsetCapRejectsAboveMaxOnSearchAlias verifies that the
-// /api/advisories/search alias (which shares parseListOptions) enforces
-// the same offset cap — offset=10001 on the alias must also be 400.
-func TestOffsetCapRejectsAboveMaxOnSearchAlias(t *testing.T) {
+// TestOffsetCapRejectsAboveMaxOnPublisherCollection verifies that the
+// publisher-collection route (/api/advisories/:publisher) also enforces
+// the offset cap — offset=10001 must be 400.
+func TestOffsetCapRejectsAboveMaxOnPublisherCollection(t *testing.T) {
 	rec := doRequest(t, &fakeQuerier{}, http.MethodGet,
-		"/api/advisories/search?offset=10001")
+		"/api/advisories/SomePublisher?offset=10001")
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("/search offset=10001: status = %d, want 400", rec.Code)
+		t.Fatalf("/SomePublisher offset=10001: status = %d, want 400", rec.Code)
 	}
 	var body map[string]string
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
@@ -104,38 +104,39 @@ func TestOffsetCapRejectsAboveMaxOnSearchAlias(t *testing.T) {
 	}
 }
 
-// TestOffsetCapRejectsLargeOffsetOnSearchAlias verifies that 999999 on the
-// search alias is also rejected.
-func TestOffsetCapRejectsLargeOffsetOnSearchAlias(t *testing.T) {
+// TestOffsetCapRejectsLargeOffsetOnPublisherCollection verifies that 999999 on
+// the publisher-collection route is also rejected.
+func TestOffsetCapRejectsLargeOffsetOnPublisherCollection(t *testing.T) {
 	rec := doRequest(t, &fakeQuerier{}, http.MethodGet,
-		"/api/advisories/search?offset=999999")
+		"/api/advisories/SomePublisher?offset=999999")
 	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("/search offset=999999: status = %d, want 400", rec.Code)
+		t.Fatalf("/SomePublisher offset=999999: status = %d, want 400", rec.Code)
 	}
 }
 
-// TestOffsetCapAllowsBoundaryOnSearchAlias asserts that offset=10000 on
-// the search alias is accepted, mirroring the list endpoint boundary test.
-func TestOffsetCapAllowsBoundaryOnSearchAlias(t *testing.T) {
+// TestOffsetCapAllowsBoundaryOnPublisherCollection asserts that offset=10000
+// on the publisher-collection route is accepted, mirroring the list endpoint
+// boundary test.
+func TestOffsetCapAllowsBoundaryOnPublisherCollection(t *testing.T) {
 	q := &fakeQuerier{}
 	rec := doRequest(t, q, http.MethodGet,
-		"/api/advisories/search?offset=10000")
+		"/api/advisories/SomePublisher?offset=10000")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("/search offset=10000: status = %d, want 200 (boundary inclusive)", rec.Code)
+		t.Fatalf("/SomePublisher offset=10000: status = %d, want 200 (boundary inclusive)", rec.Code)
 	}
 	if q.gotOpts.Offset != 10000 {
 		t.Errorf("forwarded offset = %d, want 10000", q.gotOpts.Offset)
 	}
 }
 
-// TestOffsetCapAllowsNormalOffsetOnSearchAlias confirms a normal offset on
-// the search alias is forwarded unchanged to the store.
-func TestOffsetCapAllowsNormalOffsetOnSearchAlias(t *testing.T) {
+// TestOffsetCapAllowsNormalOffsetOnPublisherCollection confirms a normal offset
+// on the publisher-collection route is forwarded unchanged to the store.
+func TestOffsetCapAllowsNormalOffsetOnPublisherCollection(t *testing.T) {
 	q := &fakeQuerier{}
 	rec := doRequest(t, q, http.MethodGet,
-		"/api/advisories/search?offset=0")
+		"/api/advisories/SomePublisher?offset=0")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("/search offset=0: status = %d, want 200", rec.Code)
+		t.Fatalf("/SomePublisher offset=0: status = %d, want 200", rec.Code)
 	}
 	if q.gotOpts.Offset != 0 {
 		t.Errorf("forwarded offset = %d, want 0", q.gotOpts.Offset)

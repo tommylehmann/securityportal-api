@@ -1,0 +1,722 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+#
+# Hand-written OpenAPI 3.1 contract for the SecurityPortal public read API
+# (ADR-0015/C-37/SA-54). After editing, regenerate openapi.json with:
+#   make openapi
+# Lint with: make openapi-lint  (requires @redocly/cli)
+openapi: "3.1.0"
+info:
+  title: SecurityPortal API
+  version: "1.0"
+  description: >
+    Read-only public API for the SecurityPortal CSAF advisory portal.
+    All endpoints return publishable-TLP advisories only; no authentication required.
+    Base path: /api
+
+servers:
+  - url: /api
+    description: SecurityPortal API
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness and readiness check
+      description: >
+        Returns 200 when the database is reachable, 503 otherwise.
+        Includes the timestamp of the last successful ingestion poll when available.
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Database unreachable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /advisories:
+    get:
+      operationId: listAdvisories
+      summary: Paginated list of publishable advisories
+      description: >
+        Returns the latest revision of each publishable, non-withdrawn advisory,
+        filtered by the optional facet parameters.
+        Carries HATEOAS _links for pagination and per-row _links.self
+        pointing at the canonical publisher-scoped permalink.
+        Use format=csv to receive the same rows as a CSV download.
+      parameters:
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/sort"
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/cve"
+        - $ref: "#/components/parameters/severity"
+        - $ref: "#/components/parameters/score_min"
+        - $ref: "#/components/parameters/score_max"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/product"
+        - $ref: "#/components/parameters/vendor"
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/tlp"
+        - $ref: "#/components/parameters/category"
+        - $ref: "#/components/parameters/lang"
+        - $ref: "#/components/parameters/format"
+      responses:
+        "200":
+          description: Advisory list page (JSON) or CSV stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdvisoryListResponse"
+            text/csv:
+              schema:
+                type: string
+                description: RFC-4180 CSV with OWASP CSV-injection cell-prefixing
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /advisories/{publisher}:
+    get:
+      operationId: listAdvisoriesByPublisher
+      summary: Advisory list scoped to one publisher
+      description: >
+        The same paged list as /advisories but filtered to a single publisher.
+        A single segment after /advisories/ is always a publisher collection;
+        there is no flat /advisories/{trackingid} form (ADR-0016).
+      parameters:
+        - $ref: "#/components/parameters/publisherPath"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/sort"
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/cve"
+        - $ref: "#/components/parameters/severity"
+        - $ref: "#/components/parameters/score_min"
+        - $ref: "#/components/parameters/score_max"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/product"
+        - $ref: "#/components/parameters/vendor"
+        - $ref: "#/components/parameters/tlp"
+        - $ref: "#/components/parameters/category"
+        - $ref: "#/components/parameters/lang"
+        - $ref: "#/components/parameters/format"
+      responses:
+        "200":
+          description: Advisory list scoped to the publisher
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdvisoryListResponse"
+            text/csv:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /advisories/{publisher}/{trackingid}:
+    get:
+      operationId: getAdvisory
+      summary: Canonical advisory permalink
+      description: >
+        Returns the stored CSAF JSON of the latest publishable revision for the
+        (publisher, tracking_id) pair. This is the only permalink form; there is
+        no flat /advisories/{trackingid} route (ADR-0016).
+        Returns 410 Gone for a withdrawn advisory; 404 for missing or non-publishable.
+      parameters:
+        - $ref: "#/components/parameters/publisherPath"
+        - name: trackingid
+          in: path
+          required: true
+          description: CSAF tracking_id (URL-encoded); max 256 bytes
+          schema:
+            type: string
+            maxLength: 256
+      responses:
+        "200":
+          description: CSAF advisory JSON (verbatim stored document)
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Verbatim CSAF 2.0 document
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "410":
+          description: Advisory has been withdrawn
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WithdrawnEnvelope"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /advisories/{publisher}/feed.atom:
+    get:
+      operationId: publisherFeed
+      summary: Per-publisher Atom 1.0 feed
+      description: >
+        Atom 1.0 feed of the most recent publishable non-withdrawn advisories for
+        one publisher. An unknown publisher returns an empty but valid feed (not 404).
+        feed.atom is a static segment — it is never treated as a tracking_id.
+      parameters:
+        - $ref: "#/components/parameters/publisherPath"
+        - $ref: "#/components/parameters/feedLimit"
+      responses:
+        "200":
+          description: Atom 1.0 feed
+          content:
+            application/atom+xml:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /documents/{id}:
+    get:
+      operationId: getDocument
+      summary: Fetch one document revision by internal numeric id
+      description: >
+        Returns the stored CSAF JSON for one document revision by its internal
+        numeric surrogate id. This is an internal/revision-level endpoint, not the
+        public permalink. Use /advisories/{publisher}/{trackingid} for permalinks.
+        Returns 404 for missing or non-publishable-TLP documents.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: Internal numeric document id
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+      responses:
+        "200":
+          description: CSAF advisory JSON (verbatim)
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Verbatim CSAF 2.0 document
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /facets:
+    get:
+      operationId: getFacets
+      summary: Facet counts for the filter sidebar
+      description: >
+        Returns distinct values and counts for each facet dimension (publisher,
+        vendor, product, category, TLP, language, severity) over the current
+        filtered set. Accepts the same filter params as /advisories.
+      parameters:
+        - $ref: "#/components/parameters/q"
+        - $ref: "#/components/parameters/cve"
+        - $ref: "#/components/parameters/severity"
+        - $ref: "#/components/parameters/score_min"
+        - $ref: "#/components/parameters/score_max"
+        - $ref: "#/components/parameters/from"
+        - $ref: "#/components/parameters/to"
+        - $ref: "#/components/parameters/product"
+        - $ref: "#/components/parameters/vendor"
+        - $ref: "#/components/parameters/publisher"
+        - $ref: "#/components/parameters/tlp"
+        - $ref: "#/components/parameters/category"
+        - $ref: "#/components/parameters/lang"
+      responses:
+        "200":
+          description: Facet counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FacetsResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /feed.atom:
+    get:
+      operationId: globalFeed
+      summary: Global Atom 1.0 feed
+      description: >
+        Atom 1.0 feed of the most recent publishable non-withdrawn advisories
+        across all publishers. Default 25 entries, max 100.
+      parameters:
+        - $ref: "#/components/parameters/feedLimit"
+      responses:
+        "200":
+          description: Atom 1.0 feed
+          content:
+            application/atom+xml:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /openapi.json:
+    get:
+      operationId: getOpenAPI
+      summary: OpenAPI 3.1 document
+      description: This hand-written OpenAPI 3.1 contract for the SecurityPortal API.
+      responses:
+        "200":
+          description: OpenAPI document
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /docs:
+    get:
+      operationId: getDocs
+      summary: Redoc API documentation viewer
+      description: >
+        Self-hosted Redoc HTML page. Redoc JS is vendored locally (no CDN).
+      responses:
+        "200":
+          description: Redoc HTML page
+          content:
+            text/html:
+              schema:
+                type: string
+
+components:
+  parameters:
+    publisherPath:
+      name: publisher
+      in: path
+      required: true
+      description: Publisher name (URL-encoded); max 256 bytes
+      schema:
+        type: string
+        maxLength: 256
+
+    limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of rows to return (default 25, max 100)
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+
+    offset:
+      name: offset
+      in: query
+      required: false
+      description: Number of rows to skip for pagination (max 10000)
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 10000
+        default: 0
+
+    feedLimit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of feed entries (default 25, max 100)
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+
+    sort:
+      name: sort
+      in: query
+      required: false
+      description: >
+        Sort column with optional direction suffix. Allowed:
+        current_release_date (default), critical.
+        Append :asc or :desc to override direction (default desc).
+      schema:
+        type: string
+        enum:
+          - current_release_date
+          - current_release_date:asc
+          - current_release_date:desc
+          - critical
+          - critical:asc
+          - critical:desc
+
+    q:
+      name: q
+      in: query
+      required: false
+      description: Free-text search query (matched against title, notes, product names)
+      schema:
+        type: string
+
+    cve:
+      name: cve
+      in: query
+      required: false
+      description: CVE id prefix filter (case-insensitive, e.g. CVE-2024-)
+      schema:
+        type: string
+
+    severity:
+      name: severity
+      in: query
+      required: false
+      description: >
+        CVSS v3 severity band filter. Repeatable (multiple values OR-ed).
+        Comma-separated values also accepted.
+      schema:
+        type: string
+        enum: [none, low, medium, high, critical]
+
+    score_min:
+      name: score_min
+      in: query
+      required: false
+      description: Minimum CVSS score (inclusive, 0.0–10.0)
+      schema:
+        type: number
+        format: float
+        minimum: 0.0
+        maximum: 10.0
+
+    score_max:
+      name: score_max
+      in: query
+      required: false
+      description: Maximum CVSS score (inclusive, 0.0–10.0)
+      schema:
+        type: number
+        format: float
+        minimum: 0.0
+        maximum: 10.0
+
+    from:
+      name: from
+      in: query
+      required: false
+      description: Start of date range on current_release_date (RFC 3339 or YYYY-MM-DD, inclusive)
+      schema:
+        type: string
+
+    to:
+      name: to
+      in: query
+      required: false
+      description: End of date range on current_release_date (RFC 3339 or YYYY-MM-DD, inclusive)
+      schema:
+        type: string
+
+    product:
+      name: product
+      in: query
+      required: false
+      description: Product name filter (case-insensitive exact match)
+      schema:
+        type: string
+
+    vendor:
+      name: vendor
+      in: query
+      required: false
+      description: Vendor name filter (case-insensitive exact match)
+      schema:
+        type: string
+
+    publisher:
+      name: publisher
+      in: query
+      required: false
+      description: Publisher name filter (exact match on publisher_name)
+      schema:
+        type: string
+
+    tlp:
+      name: tlp
+      in: query
+      required: false
+      description: >
+        TLP label filter. Intersected with the publishable set; a non-publishable
+        label (e.g. RED) always matches nothing. Repeatable.
+      schema:
+        type: string
+        enum: [WHITE, CLEAR, UNLABELED]
+
+    category:
+      name: category
+      in: query
+      required: false
+      description: CSAF document category filter (exact match)
+      schema:
+        type: string
+
+    lang:
+      name: lang
+      in: query
+      required: false
+      description: Document language filter (exact match, e.g. de, en)
+      schema:
+        type: string
+
+    format:
+      name: format
+      in: query
+      required: false
+      description: >
+        Response format. json (default) returns the standard JSON body.
+        csv streams the list columns as RFC-4180 CSV with a Content-Disposition
+        attachment header. CSV is only accepted on list endpoints; document and
+        feed endpoints ignore this parameter.
+      schema:
+        type: string
+        enum: [json, csv]
+        default: json
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, database]
+      properties:
+        status:
+          type: string
+          enum: [ok, unavailable]
+          description: ok when the database is reachable, unavailable otherwise
+        database:
+          type: string
+          enum: [reachable, unreachable]
+        last_ingest:
+          type: string
+          format: date-time
+          description: Timestamp of the last successful ingestion poll (omitted before first poll)
+        version:
+          type: string
+          description: Service version string (optional)
+
+    AdvisoryRow:
+      type: object
+      description: >
+        One advisory in a list response. Carries the facet projection columns
+        and a _links.self permalink.
+      required: [tracking_id, cves, _links]
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: >
+            Internal document id — present for backwards compatibility but
+            MUST NOT be used as a permalink. Use _links.self instead (C-34/SA-50).
+        tracking_id:
+          type: string
+        publisher_name:
+          type: string
+          nullable: true
+        title:
+          type: string
+          nullable: true
+        current_release_date:
+          type: string
+          format: date-time
+          nullable: true
+        initial_release_date:
+          type: string
+          format: date-time
+          nullable: true
+        tlp:
+          type: string
+          nullable: true
+        category:
+          type: string
+          nullable: true
+        critical:
+          type: number
+          format: float
+          nullable: true
+        cvss_v2_score:
+          type: number
+          format: float
+          nullable: true
+        cvss_v3_score:
+          type: number
+          format: float
+          nullable: true
+        lang:
+          type: string
+          nullable: true
+        tracking_status:
+          type: string
+          nullable: true
+        version:
+          type: string
+          nullable: true
+        cves:
+          type: array
+          items:
+            type: string
+          description: Aggregated CVE ids extracted from the document
+        _links:
+          $ref: "#/components/schemas/RowLinks"
+
+    RowLinks:
+      type: object
+      required: [self]
+      description: HATEOAS links for one advisory row
+      properties:
+        self:
+          type: string
+          description: >
+            Canonical publisher-scoped permalink: /api/advisories/{publisher}/{trackingid}.
+            Both segments are URL-encoded. Never the internal numeric id.
+
+    CollectionLinks:
+      type: object
+      required: [self, first]
+      description: HATEOAS pagination links for a collection response
+      properties:
+        self:
+          type: string
+          description: URL of the current page
+        first:
+          type: string
+          description: URL of the first page
+        prev:
+          type: string
+          description: URL of the previous page (absent on the first page)
+        next:
+          type: string
+          description: URL of the next page (absent on the last page)
+
+    AdvisoryListResponse:
+      type: object
+      required: [advisories, total, limit, offset, _links]
+      properties:
+        advisories:
+          type: array
+          items:
+            $ref: "#/components/schemas/AdvisoryRow"
+        total:
+          type: integer
+          format: int64
+          description: Total number of advisories matching the filter (before limit/offset)
+        limit:
+          type: integer
+          description: The limit applied to this page
+        offset:
+          type: integer
+          description: The offset applied to this page
+        _links:
+          $ref: "#/components/schemas/CollectionLinks"
+
+    WithdrawnEnvelope:
+      type: object
+      required: [withdrawn, tracking_id, withdrawn_at]
+      description: >
+        Returned with HTTP 410 Gone when a permalink resolves to a withdrawn advisory.
+        Contains exactly three keys; no internal ids or document fields (C-35/SA-51).
+      properties:
+        withdrawn:
+          type: boolean
+          enum: [true]
+        tracking_id:
+          type: string
+          description: The CSAF tracking_id (URL-decoded)
+        withdrawn_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Timestamp when the advisory was tombstoned (null if unavailable)
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      description: Uniform error body for 4xx and 5xx responses
+      properties:
+        error:
+          type: string
+          description: Human-readable error description (no SQL text, stack traces, or internal hostnames)
+
+    FacetCount:
+      type: object
+      required: [value, count]
+      properties:
+        value:
+          type: string
+        count:
+          type: integer
+          format: int64
+
+    FacetGroup:
+      type: object
+      required: [values, capped]
+      properties:
+        values:
+          type: array
+          items:
+            $ref: "#/components/schemas/FacetCount"
+        capped:
+          type: boolean
+          description: True when the facet had more values than the cap and was truncated
+
+    FacetsResponse:
+      type: object
+      required: [publisher, vendor, product, category, tlp, lang, severity]
+      properties:
+        publisher:
+          $ref: "#/components/schemas/FacetGroup"
+        vendor:
+          $ref: "#/components/schemas/FacetGroup"
+        product:
+          $ref: "#/components/schemas/FacetGroup"
+        category:
+          $ref: "#/components/schemas/FacetGroup"
+        tlp:
+          $ref: "#/components/schemas/FacetGroup"
+        lang:
+          $ref: "#/components/schemas/FacetGroup"
+        severity:
+          $ref: "#/components/schemas/FacetGroup"
+
+  responses:
+    BadRequest:
+      description: Invalid request parameter
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    NotFound:
+      description: Advisory not found or not publishable (no existence oracle for restricted documents)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    InternalError:
+      description: Internal server error (generic message, no details)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

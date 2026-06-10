@@ -12,7 +12,7 @@ A Go backend that ingests advisories from a CSAF Trusted Provider, stores them i
 ## Overview
 
 - **Ingestion worker:** polls a Trusted Provider's ROLIE feeds, verifies SHA256/512 + PGP signatures, applies TLP publish policy, and stores only publishable advisories in Postgres.
-- **Read-only REST API:** exposes `/api/advisories` (list + search), `/api/documents/:id` (single advisory JSON), `/api/facets` (filter sidebar counts), and `/api/health` (liveness).
+- **Read-only REST API:** exposes `/api/advisories` (list + search), `/api/advisories/{trackingid}` (public advisory permalink by tracking ID), `/api/documents/:id` (internal revision-level fetch), `/api/facets` (filter sidebar counts), and `/api/health` (liveness).
 - **Database:** PostgreSQL 16 with `tsvector` full-text search, per-document revision tracking, and TLP-gated access.
 - **No authentication:** the API is public and read-only. All endpoints return 404 for non-publishable documents (defense in depth).
 
@@ -173,14 +173,27 @@ List the latest revision of each advisory with facet fields.
       "cvss_v3_score": 9.8,
       "lang": "en",
       "tracking_status": "final",
-      "version": "1"
+      "version": "1",
+      "_links": {
+        "self": "/api/advisories/Example%20AG/securityportal-2026-0001"
+      }
     }
   ],
   "total": 42,
   "limit": 25,
-  "offset": 0
+  "offset": 0,
+  "_links": {
+    "self": "/api/advisories?limit=25&offset=0",
+    "first": "/api/advisories?limit=25&offset=0",
+    "next": "/api/advisories?limit=25&offset=25"
+  }
 }
 ```
+
+**HATEOAS links (ADR-0015):**
+- `_links.self` on each advisory row → the publisher-scoped permalink `/api/advisories/{publisher}/{trackingid}`.
+- `_links` on the list → `self` (current page), `first` (page 0), `prev` (previous page, omitted at offset 0), `next` (next page, omitted at the end).
+- All links are relative to `/api` and include all active query parameters (filters, sort, etc.) for drill-down consistency.
 
 **Responses:**
 - **200 OK:** success. The `advisories` list may be empty if no rows match the filters.
@@ -194,25 +207,175 @@ List the latest revision of each advisory with facet fields.
 - Withdrawn advisories are excluded from the list.
 - Results are limited to the latest revision per advisory (determined by version and release date).
 
-### `GET /api/advisories/search`
+### `GET /api/advisories` with `format=csv`
 
-Alias for `/api/advisories`. Both paths accept the same query parameters.
+Export the advisory list in CSV format (RFC-4180). All the same filters and pagination apply.
 
-### `GET /api/documents/:id`
+**Query parameters:** Same as `/api/advisories` plus:
+- `format=csv`: export as CSV (default `format=json`).
 
-Fetch the stored CSAF JSON for a single advisory revision.
+**Response (200 OK):**
+```
+tracking_id,publisher_name,title,current_release_date,initial_release_date,tlp,category,critical,cvss_v2_score,cvss_v3_score,lang,tracking_status,version,cves
+wid-sec-w-2026-1816,"Example AG","Critical vulnerability in Example Product","2026-06-08T00:00:00Z","2026-06-01T00:00:00Z","WHITE","csaf_security_advisory",9.8,,9.8,"en","final","1","CVE-2024-12345"
+...
+```
 
-**Path parameter:**
-- `id` (integer): the document ID (from the `advisories` list response)
+**Responses:**
+- **200 OK:** CSV data (`text/csv; charset=utf-8` with `Content-Disposition: attachment`).
+- **400 Bad Request:** malformed filter parameter.
+- **500 Internal Server Error:** database error.
+
+**Security:**
+- CSV cells starting with `=`, `+`, `-`, `@`, TAB, or CR are prefixed with `'` to prevent formula injection (OWASP CWE-1236).
+- CSAF document bodies are never exported (only list columns).
+- Pagination limits apply (same `limit`/`maxOffset` as JSON).
+
+### `GET /api/advisories/{publisher}/{trackingid}`
+
+Fetch the stored CSAF JSON for an advisory by its publisher and CSAF `tracking_id` — the stable, publisher-scoped public permalink (ADR-0016).
+
+**Path parameters:**
+- `publisher` (string): the publisher name (e.g., `Example AG`, `Bundesamt für Sicherheit in der Informationstechnik`). URL-encode special characters (spaces, umlauts, etc.). Maximum 256 bytes.
+- `trackingid` (string): the CSAF tracking ID (e.g., `wid-sec-w-2026-1816`, `RHSA-2024:5101`). URL-encode special characters (`:`, `/`, etc.). Maximum 256 bytes.
+
+**Response (200 OK — published advisory):**
+```json
+{
+  "csaf_version": "2.0",
+  "tracking": { "id": "wid-sec-w-2026-1816", ... },
+  ...
+}
+```
+
+The response body is the exact stored CSAF JSON, served with `Content-Type: application/json; charset=utf-8`.
+
+**Response (410 Gone — withdrawn advisory):**
+```json
+{
+  "withdrawn": true,
+  "tracking_id": "wid-sec-w-2026-1816",
+  "withdrawn_at": "2026-06-09T10:30:00Z"
+}
+```
+
+When the advisory has been withdrawn (tombstoned), HTTP 410 is returned with the envelope instead of 200. The frontend maps this to a "no longer published" notice (ADR-0015 / OQ-3).
+
+**Responses:**
+- **200 OK:** advisory found and publishable (CSAF JSON).
+- **410 Gone:** advisory found but withdrawn (envelope only, no body).
+- **404 Not Found:** `(publisher, tracking_id)` pair does not exist, or the latest revision is non-publishable.
+- **400 Bad Request:** `publisher` or `trackingid` exceeds 256 bytes.
+- **500 Internal Server Error:** database error.
+
+**Semantics:**
+- **Only permalink format:** there is no flat `/api/advisories/{trackingid}` route. All permalinks are publisher-scoped (ADR-0016 / OQ-15).
+- Resolves to the **latest publishable revision** of the advisory for `(publisher, tracking_id)`. An advisory whose head revision is non-publishable returns 404 even if an older publishable revision exists (consistent with list/search TLP gating).
+- The permalink is stable across database reseeds and reimports (the tracking ID is publisher-assigned, not a database surrogate).
+- Withdrawn advisories return **410 Gone** (semantically correct for "gone but historically addressable") rather than 404, so the "no longer published" notice can be shown.
+- Missing and non-publishable advisories both return 404 (no existence oracle for restricted documents; spec §12 defense in depth).
+
+### `GET /api/openapi.json`
+
+The OpenAPI 3.1 contract for the entire public API, suitable for tooling and API-documentation generation.
 
 **Response (200 OK):**
 ```json
 {
-  "document": {
-    "csaf_version": "2.0",
-    "tracking": { "id": "securityportal-2026-0001", ... },
+  "openapi": "3.1.0",
+  "info": { "title": "SecurityPortal API", "version": "1.0.0" },
+  "paths": {
+    "/api/health": { ... },
+    "/api/advisories": { ... },
+    "/api/advisories/{publisher}/{trackingid}": { ... },
     ...
   }
+}
+```
+
+Served as `application/json` with `nosniff`. The document describes only the public read endpoints; no ingest or internal paths are included.
+
+### `GET /api/docs`
+
+Interactive OpenAPI reference viewer (Redoc). Opens in the browser at `/api/docs` and displays the schema from `/api/openapi.json`.
+
+**Features:**
+- Search and filter endpoints
+- Expand/collapse request/response schemas
+- Try-it-out for `GET` endpoints (queries the live API)
+- All navigation is same-origin (no external CDN)
+
+This is the canonical reference for API consumers. Point them to `/api/docs` rather than trying to document the endpoints manually.
+
+### `GET /api/feed.atom`
+
+Global Atom 1.0 feed of the most-recent publishable advisories (ADR-0017).
+
+**Query parameters:**
+- `limit` (integer, default 25): max entries in the feed. Clamped to max 100.
+
+**Response (200 OK):**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <id>https://example.com/api/feed.atom</id>
+  <title>SecurityPortal Advisories</title>
+  <updated>2026-06-08T14:30:00Z</updated>
+  <link rel="self" href="/api/feed.atom" />
+  <entry>
+    <id>https://example.com/api/advisories/Example%20AG/wid-sec-w-2026-1816</id>
+    <title>Critical vulnerability in Example Product</title>
+    <updated>2026-06-08T00:00:00Z</updated>
+    <published>2026-06-01T00:00:00Z</published>
+    <link rel="alternate" type="text/html" href="/advisories/Example%20AG/wid-sec-w-2026-1816" />
+    <summary>Critical (9.8) — CVE-2024-12345</summary>
+  </entry>
+</feed>
+```
+
+**Responses:**
+- **200 OK:** valid Atom 1.0 feed (may be empty if no advisories match).
+- **400 Bad Request:** malformed limit parameter.
+- **500 Internal Server Error:** database error.
+
+**Feed semantics:**
+- **Metadata only:** each entry contains the advisory's title, CVEs, severity, and dates. **No free-text content or HTML body is included** — readers follow the `<link rel="alternate">` to the web portal to read the full advisory (C-30/SA-45).
+- **Publisher-scoped:** the `<id>` and `<link>` use the publisher-scoped permalink `/api/advisories/{publisher}/{trackingid}` (and the web equivalent `/advisories/{publisher}/{trackingid}`).
+- **Withdrawn excluded:** tombstoned advisories are absent from the feed (consistent with list filtering).
+- **Sorted by date:** entries are newest first (`current_release_date desc`).
+- **Caching:** the feed carries `Last-Modified` (based on the newest entry) and `Cache-Control: max-age` to let feed readers cache it (recommended: short TTL, 5–15 minutes).
+
+**Subscribing:** Feed readers (e.g., Thunderbird, Feedly, RSS aggregators) can subscribe to `https://example.com/api/feed.atom`.
+
+### `GET /api/advisories/{publisher}/feed.atom`
+
+Per-publisher Atom 1.0 feed, scoped to advisories from one publisher. Same format and semantics as `/api/feed.atom`.
+
+**Path parameter:**
+- `publisher` (string): the publisher name to filter by.
+
+**Query parameters:**
+- `limit` (integer, default 25): max entries. Clamped to 100.
+
+**Response:** Same as `/api/feed.atom`, but entries are filtered to the specified publisher.
+
+**Semantics:**
+- Unknown publisher returns a valid but empty feed (200 OK with zero entries), not 404.
+- The feed `<id>` and links are still publisher-scoped `/api/advisories/{publisher}/feed.atom` and `/advisories/{publisher}/{trackingid}`.
+
+### `GET /api/documents/:id`
+
+**Internal / revision-level endpoint** — not the public advisory permalink. Fetch a specific document revision by numeric surrogate ID (useful for revision history deep links and internal debug use).
+
+**Path parameter:**
+- `id` (integer): the document surrogate ID (internal database ID, not for external use).
+
+**Response (200 OK):**
+```json
+{
+  "csaf_version": "2.0",
+  "tracking": { "id": "...", ... },
+  ...
 }
 ```
 
@@ -220,13 +383,14 @@ The response body is the exact stored CSAF JSON, served with `Content-Type: appl
 
 **Responses:**
 - **200 OK:** document found and publishable.
-- **404 Not Found:** document does not exist, is withdrawn, or is non-publishable. (404 is returned for both missing and unpublishable to avoid confirming the existence of restricted documents.)
+- **404 Not Found:** document does not exist or is non-publishable.
 - **400 Bad Request:** malformed ID (not an integer).
 - **500 Internal Server Error:** database error.
 
 **Semantics:**
-- The stored JSON is canonicalized (may have reordered keys, normalized whitespace). For byte-identical retrieval, `original` bytes are available but not currently exposed.
-- Withdrawn advisories' documents are still served (permalink stability).
+- The stored JSON is canonicalized (may have reordered keys, normalized whitespace).
+- **Public advisory permalinks use `/api/advisories/{trackingid}` instead** (ADR-0013). This endpoint is retained for internal revision tracking and is not advertised to end users.
+- Withdrawn advisories' documents may be served (but the tracking-id endpoint's withdrawn envelope is preferred for public discovery).
 
 ### `GET /api/facets`
 
@@ -316,6 +480,19 @@ Test files:
 - `pkg/web/handlers_test.go` — handler unit tests with fake DB
 
 ## Security notes
+
+### Authorization (anonymous-only in v1; OIDC seam prepared for v2)
+
+**v1 behavior:** The API is unauthenticated. All requests are treated as **anonymous** and see only documents matching the publishable TLP set (default: `WHITE,UNLABELED`). No Bearer token is accepted.
+
+**Future OIDC integration (v2+, ADR-0019):** A prepared-but-inactive principal-resolution seam exists in `pkg/auth/principal.go`:
+
+- A `Principal` type with `AllowedTLP() []string` and `Roles() []string` methods.
+- An unregistered `bearerTokenResolver` stub that documents where OIDC token validation would integrate (does not run; returns a panic if called).
+- A roles-to-TLP mapping table (future). Authenticated roles would *widen* the allowed TLP set (e.g., a `green-reader` role adds `GREEN`); the base anonymous set is never removed.
+- The SQL TLP gate (`upper(d.tlp)=ANY($allowed_set)`) remains the single enforcement point; only its source changes from a static controller field to a per-request principal.
+
+To add OIDC in the future: implement the `bearerTokenResolver` to validate an access token against a Keycloak (or other OIDC) instance, extract claims, map roles to TLP, and attach the principal to the request context. No other changes are required (the rest of the stack already threads the principal through).
 
 ### TLP publishing policy
 

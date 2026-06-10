@@ -13,11 +13,11 @@ import (
 	"testing"
 )
 
-// These tests cover the NEW task-17/18 surface at the HTTP seam: filter-param
-// validation (malformed values are 400, not 500), the /api/facets endpoint, the
-// /api/advisories/search alias, and the TLP non-leak invariant on both list and
-// facets. The fast cases use the fake Querier (no docker); the wired cases use
-// the live apiHarness and skip cleanly without docker.
+// These tests cover the task-17/18 surface at the HTTP seam: filter-param
+// validation (malformed values are 400, not 500), the /api/facets endpoint, and
+// the TLP non-leak invariant on both list and facets. The fast cases use the
+// fake Querier (no docker); the wired cases use the live apiHarness and skip
+// cleanly without docker.
 
 // --- 7. validation: malformed filter params are 400 (fake Querier, fast) -----
 
@@ -36,7 +36,9 @@ func TestParseFiltersRejectsMalformedParams(t *testing.T) {
 		"to=01-01-2026", // wrong layout
 	}
 	for _, query := range bad {
-		for _, path := range []string{"/api/advisories?", "/api/facets?", "/api/advisories/search?"} {
+		// Cover both the global list endpoint and the facets endpoint (they share
+		// parseFilters). The /advisories/search alias was removed in task 44.
+		for _, path := range []string{"/api/advisories?", "/api/facets?"} {
 			target := path + query
 			rec := doRequest(t, &fakeQuerier{}, http.MethodGet, target)
 			if rec.Code != http.StatusBadRequest {
@@ -84,7 +86,7 @@ func TestParseFiltersAcceptsValidParams(t *testing.T) {
 	}
 }
 
-// --- live /api/facets + /api/advisories/search (apiHarness, docker) ----------
+// --- live /api/facets (apiHarness, docker) ------------------------------------
 
 // facetsResponse mirrors the JSON shape of GET /api/facets.
 type facetsResponse struct {
@@ -255,31 +257,33 @@ func TestAPIFacetsTLPRedYieldsNoCounts(t *testing.T) {
 	}
 }
 
-// TestAPISearchAliasHonoursFilters confirms /api/advisories/search is a true
-// alias of the list endpoint and applies the search/facet params, with the TLP
-// non-leak invariant holding (an explicit tlp=RED returns nothing).
-func TestAPISearchAliasHonoursFilters(t *testing.T) {
+// TestAPIListWithVendorFilterHonoursFilters confirms that /api/advisories with
+// a vendor filter applies the search/facet params, with the TLP non-leak
+// invariant holding (an explicit tlp=RED returns nothing). The /advisories/search
+// alias was retired in task 44; the q param and all facet filters are native to
+// /api/advisories.
+func TestAPIListWithVendorFilterHonoursFilters(t *testing.T) {
 	h := newAPIHarness(t)
 	h.seedFacetDoc(t, "SRCH-ACME", "Acme Security Team", "WHITE", "Acme", "Gateway")
 	h.seedFacetDoc(t, "SRCH-BETA", "Beta CERT", "WHITE", "Beta", "Portal")
 	h.seedFacetDoc(t, "SRCH-RED", "Acme Security Team", "RED", "Acme", "Gateway")
 
-	// vendor=Acme via the alias -> only the publishable Acme advisory.
-	rec := h.get(t, "/api/advisories/search?vendor=Acme")
+	// vendor=Acme -> only the publishable Acme advisory.
+	rec := h.get(t, "/api/advisories?vendor=Acme")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200\n%s", rec.Code, rec.Body.String())
 	}
 	body := decodeList(t, rec)
 	if body.Total != 1 || !contains(body.ids(), "SRCH-ACME") {
-		t.Errorf("search vendor=Acme = %v (total %d), want only SRCH-ACME", body.ids(), body.Total)
+		t.Errorf("vendor=Acme = %v (total %d), want only SRCH-ACME", body.ids(), body.Total)
 	}
 	if contains(body.ids(), "SRCH-RED") {
-		t.Error("restricted RED advisory must never surface through the search alias")
+		t.Error("restricted RED advisory must never surface")
 	}
 
-	// tlp=RED via the alias -> nothing.
-	rec = h.get(t, "/api/advisories/search?tlp=RED")
+	// tlp=RED -> nothing.
+	rec = h.get(t, "/api/advisories?tlp=RED")
 	if got := decodeList(t, rec).Total; got != 0 {
-		t.Errorf("search tlp=RED total = %d, want 0 (no leak)", got)
+		t.Errorf("tlp=RED total = %d, want 0 (no leak)", got)
 	}
 }
