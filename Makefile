@@ -8,14 +8,19 @@
 .PHONY: all build vet test vuln sbom openapi openapi-lint version dist
 
 # Version is derived from git, SemVer-style, so local `make dist` matches what
-# the release workflow builds. Logic mirrors gocsaf/csaf and ISDuBA: take
-# `git describe`, and if it has commits past the last tag, bump the patch so an
-# untagged build sorts *after* the tag it descends from.
-GITDESC := $(shell git describe --tags --always --dirty 2>/dev/null || echo v0.0.0)
-GITDESCPATCH := $(shell echo '$(GITDESC)' | sed -E 's/v?[0-9]+\.[0-9]+\.([0-9]+)[-+]?.*/\1/')
-SEMVERPATCH := $(shell echo $$(( $(GITDESCPATCH) + 1 )) 2>/dev/null || echo 0)
-SEMVER := $(shell echo '$(GITDESC)' | sed -E -e 's/^v//' -e 's/([0-9]+\.[0-9]+\.)([0-9]+)(-[1-9].*)/\1$(SEMVERPATCH)\3/')
-VERSION ?= v$(SEMVER)
+# the release workflow builds. On a tagged checkout this is the tag (e.g.
+# v1.2.3); past a tag it's the `git describe` form (v1.2.3-4-gabc1234); with no
+# tag yet it falls back to v0.0.0-g<sha>. Released versions come from the tag in
+# CI (release.yml); this target is for local/parity builds.
+VERSION ?= $(shell \
+	d=$$(git describe --tags --always --dirty 2>/dev/null); \
+	if printf '%s' "$$d" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+'; then \
+		printf 'v%s' "$$(printf '%s' "$$d" | sed -E 's/^v//')"; \
+	elif [ -n "$$d" ]; then \
+		printf 'v0.0.0-g%s' "$$d"; \
+	else \
+		printf 'v0.0.0'; \
+	fi)
 
 DISTDIR := dist
 DISTNAME := securityportal-api-$(VERSION)-linux-amd64
@@ -70,7 +75,7 @@ sbom:
 
 # version — print the git-derived SemVer the build would stamp in.
 version:
-	@echo "$(VERSION)  (from git describe '$(GITDESC)')"
+	@echo "$(VERSION)"
 
 # dist — build the release tarball the way the release workflow does:
 # a version-stamped linux/amd64 binary plus a CycloneDX SBOM. Note that CI

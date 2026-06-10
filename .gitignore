@@ -11,6 +11,11 @@
 *.test
 *.out
 
+# Release artifacts (produced by `make dist` / the release workflow)
+/dist/
+*-sbom.cdx.json
+*-sbom.spdx.json
+
 # Go workspace / vendor
 /vendor/
 go.work
@@ -28,3 +33,6 @@ docker/branding/logo.*
 # Editor / OS noise
 .DS_Store
 *.swp
+
+# codegraph local index (security review F4 — may contain copied secrets)
+.codegraph/

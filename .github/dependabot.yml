@@ -1,0 +1,49 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Dependabot keeps every pinned dependency current: Go modules, the SHA-pinned
+# GitHub Actions, and the digest-pinned base image. Combined with Dependabot
+# security updates (enable in repo Settings → Code security), this is the
+# "open a PR when something is outdated or vulnerable" half of supply-chain
+# monitoring; supply-chain-monitor.yml is the "scan what is deployed" half.
+#
+# Minor + patch bumps are grouped to cut PR noise; majors come as their own PRs.
+
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions-minor-patch:
+        update-types: ["minor", "patch"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: docker
+    # The API image is built from docker/api/Dockerfile; Dependabot bumps the
+    # pinned base-image digest there.
+    directory: "/docker/api"
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(docker)"

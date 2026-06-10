@@ -1,0 +1,144 @@
+# This file is Free Software under the Apache-2.0 License
+# without warranty, see README.md and LICENSES/Apache-2.0.txt for details.
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# SPDX-FileCopyrightText: 2026 Tommy Lehmann
+
+# Continuous supply-chain monitor for securityportal-api.
+#
+# Dependabot opens PRs to keep dependencies, base images and pinned actions
+# current. This workflow is the complementary "what is vulnerable right now"
+# view: it scans the source tree AND the latest published image with Trivy,
+# uploads results to GitHub code scanning (free on public repos), and keeps a
+# single rolled-up tracking issue in sync — opened/updated when HIGH/CRITICAL
+# findings appear, closed automatically when the tree is clean again.
+#
+# It runs on a weekly schedule (so newly-disclosed CVEs against unchanged code
+# are caught) and on demand via workflow_dispatch.
+
+name: Supply-chain monitor
+
+on:
+  schedule:
+    # Mondays 07:00 UTC — after the weekly security.yml gate jobs.
+    - cron: "0 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write # upload SARIF to code scanning
+  issues: write # open / update / close the tracking issue
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/securityportal-api
+  TRIVY_SEVERITY: HIGH,CRITICAL
+
+jobs:
+  trivy:
+    name: Trivy scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Trivy — filesystem (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: trivy-fs.sarif
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: true
+
+      - name: Upload filesystem SARIF
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+
+      - name: Trivy — published image (SARIF)
+        # The image may not exist yet on a fresh fork (no release cut). Do not
+        # fail the run in that case; the issue logic below tolerates a missing file.
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_NAME }}:latest
+          format: sarif
+          output: trivy-image.sarif
+          severity: ${{ env.TRIVY_SEVERITY }}
+          ignore-unfixed: true
+
+      - name: Upload image SARIF
+        if: ${{ hashFiles('trivy-image.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          sarif_file: trivy-image.sarif
+          category: trivy-image
+
+      - name: Sync tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const LABEL = 'supply-chain';
+            const TITLE = 'Supply-chain: HIGH/CRITICAL vulnerabilities detected';
+
+            // Collect SARIF results across whichever scan files were produced.
+            const sources = [
+              { name: 'Filesystem', file: 'trivy-fs.sarif' },
+              { name: 'Published image', file: 'trivy-image.sarif' },
+            ];
+            const findings = [];
+            for (const s of sources) {
+              if (!fs.existsSync(s.file)) continue;
+              let sarif;
+              try { sarif = JSON.parse(fs.readFileSync(s.file, 'utf8')); }
+              catch { continue; }
+              for (const run of sarif.runs || []) {
+                for (const r of run.results || []) {
+                  const rule = r.ruleId || 'unknown';
+                  const msg = (r.message && r.message.text || '').split('\n')[0];
+                  findings.push(`- **${s.name}** \`${rule}\` — ${msg}`);
+                }
+              }
+            }
+
+            // Find an existing open tracking issue by label.
+            const { owner, repo } = context.repo;
+            const existing = (await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', labels: LABEL, per_page: 100,
+            }))[0];
+
+            if (findings.length === 0) {
+              if (existing) {
+                await github.rest.issues.createComment({
+                  owner, repo, issue_number: existing.number,
+                  body: `No HIGH/CRITICAL findings as of run [${context.runId}](${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}). Closing.`,
+                });
+                await github.rest.issues.update({ owner, repo, issue_number: existing.number, state: 'closed' });
+              }
+              core.info('No HIGH/CRITICAL findings.');
+              return;
+            }
+
+            const body = [
+              `Trivy found **${findings.length}** HIGH/CRITICAL (fixable) finding(s).`,
+              '',
+              'Full details are in the **Security → Code scanning** tab (categories `trivy-fs`, `trivy-image`).',
+              '',
+              ...findings.slice(0, 50),
+              findings.length > 50 ? `\n…and ${findings.length - 50} more (see code scanning).` : '',
+              '',
+              `_Generated by [supply-chain-monitor run ${context.runId}](${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId})._`,
+            ].join('\n');
+
+            if (existing) {
+              await github.rest.issues.update({ owner, repo, issue_number: existing.number, title: TITLE, body });
+              core.info(`Updated issue #${existing.number}`);
+            } else {
+              const created = await github.rest.issues.create({ owner, repo, title: TITLE, body, labels: [LABEL] });
+              core.info(`Created issue #${created.data.number}`);
+            }

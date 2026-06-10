@@ -6,8 +6,12 @@
 # SPDX-FileCopyrightText: 2026 Tommy Lehmann
 
 # Build the securityportal-api binary.
-# Pin to the same minor version as go.mod; update this when go.mod toolchain advances.
-FROM library/golang:1.26.4-alpine AS build
+# Base image is pinned by digest (supply-chain hardening); the tag in the
+# comment is the human-readable version. Dependabot (docker ecosystem, see
+# .github/dependabot.yml) bumps the digest. Keep the tag aligned with the
+# go.mod toolchain when it advances.
+# library/golang:1.26.4-alpine
+FROM library/golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS build
 # CA certificates are needed to pull advisories from the HTTPS Trusted Provider.
 RUN apk add -U --no-cache ca-certificates && update-ca-certificates
 
@@ -27,6 +31,14 @@ RUN go build \
 
 
 FROM scratch
+
+# Re-declare to consume the build-time version in the final stage's label. For
+# CI builds the release workflow's metadata-action also stamps the full OCI
+# label set (source, revision, created, …); this keeps a sensible version label
+# on plain local `docker build` too.
+ARG BUILD_VERSION=v0.0.0
+LABEL org.opencontainers.image.title="securityportal-api" \
+      org.opencontainers.image.version="${BUILD_VERSION}"
 
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=build /app/securityportal-api /app/securityportal-api
