@@ -97,7 +97,7 @@ func NewAnonymousPrincipal(cfg *config.Config) Principal {
 }
 
 func (p *anonymousPrincipal) AllowedTLP() []string { return p.allowedTLP }
-func (p *anonymousPrincipal) Roles() []string       { return nil }
+func (p *anonymousPrincipal) Roles() []string      { return nil }
 
 // RoleMap is a config-driven mapping from role name to the extra TLP labels
 // (beyond the public set) that principals carrying that role may see.
@@ -151,7 +151,7 @@ type rolePrincipal struct {
 }
 
 func (p *rolePrincipal) AllowedTLP() []string { return p.allowedTLP }
-func (p *rolePrincipal) Roles() []string       { return p.roles }
+func (p *rolePrincipal) Roles() []string      { return p.roles }
 
 // PrincipalFromContext retrieves the Principal stored by the resolver middleware.
 // It panics if called outside a request context that went through the registered

@@ -1088,10 +1088,11 @@ func TestRoutingPublisherFeedAtomIsScoped(t *testing.T) {
 
 // TestRoutingTableDriven exercises the SA-42 table-driven router test cases from
 // the threat model spec:
-//   /api/advisories/Red%20Hat/RHSA-2024%3A5101   → resource handler (2-segment)
-//   /api/advisories/..%2F..%2Fhealth              → NOT health (traversal blocked)
-//   /api/advisories/feed.atom                     → publisher-collection (publisher="feed.atom")
-//   300-byte publisher segment                    → 400
+//
+//	/api/advisories/Red%20Hat/RHSA-2024%3A5101   → resource handler (2-segment)
+//	/api/advisories/..%2F..%2Fhealth              → NOT health (traversal blocked)
+//	/api/advisories/feed.atom                     → publisher-collection (publisher="feed.atom")
+//	300-byte publisher segment                    → 400
 func TestRoutingTableDriven(t *testing.T) {
 	raw := []byte(`{"document":{"title":"x"}}`)
 
@@ -1197,7 +1198,7 @@ func TestWithdrawnNonPublishableAdvisory_404NotGone(t *testing.T) {
 		"/api/advisories/Acme/WD-NON-PUB-1")
 
 	if rec.Code == http.StatusGone {
-		t.Errorf("SA-51/SA-41 FAIL: withdrawn+non-publishable returned 410 Gone; "+
+		t.Errorf("SA-51/SA-41 FAIL: withdrawn+non-publishable returned 410 Gone; " +
 			"want 404 (non-publishable 404 must win over 410 to avoid restricted-existence oracle)")
 	}
 	if rec.Code != http.StatusNotFound {
@@ -1296,7 +1297,7 @@ func TestFeedLastModified_Empty(t *testing.T) {
 // /advisories/{publisher}/{trackingId} (ADR-0016/ADR-0017).
 func TestAtomEntryAlternateHref_SpecialChars(t *testing.T) {
 	const host = "portal.example.test"
-	pub := "Example Corp"       // contains a space
+	pub := "Example Corp"          // contains a space
 	trackingID := "RHSA-2024:5101" // contains a colon
 
 	adv := database.Advisory{

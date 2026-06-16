@@ -158,8 +158,8 @@ func TestGetByTrackingID_SQLiPayloads_SA27(t *testing.T) {
 		"x'; SELECT 1; --",
 		`"; DROP TABLE advisories; --`,
 		"' UNION SELECT document::text, false, null FROM documents LIMIT 1 --",
-		"$1",     // raw placeholder
-		"\\x00",  // null-byte-ish
+		"$1",    // raw placeholder
+		"\\x00", // null-byte-ish
 	}
 
 	for _, payload := range payloads {
