@@ -36,3 +36,6 @@ docker/branding/logo.*
 
 # codegraph local index (security review F4 — may contain copied secrets)
 .codegraph/
+
+# Serena MCP local project config (tool-generated, not project source)
+.serena/
