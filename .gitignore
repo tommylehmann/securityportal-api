@@ -39,3 +39,7 @@ docker/branding/logo.*
 
 # Serena MCP local project config (tool-generated, not project source)
 .serena/
+
+# Helm dependency archives — fetched via `helm dependency build` (Chart.lock
+# pins the version); not vendored into the repo.
+/deploy/helm/securityportal/charts/

@@ -30,6 +30,12 @@ helm template my-portal deploy/helm/securityportal
 The default values render a complete, valid manifest set with placeholder
 credentials.  No live cluster is needed to inspect the output.
 
+> The Bitnami PostgreSQL subchart is **not vendored** into the repository. Run
+> `helm dependency build` (or `update`) first — it reads the pinned version from
+> `Chart.lock` and fetches the archive into `charts/` (gitignored). Only needed
+> when `postgresql.enabled=true`; the default external-database path does not
+> pull the subchart.
+
 ---
 
 ## Production install
