@@ -20,14 +20,14 @@ import (
 	"github.com/securityportal/securityportal-api/pkg/database"
 )
 
-// csvInjectionPrefixChars is the set of leading characters that spreadsheet
-// applications (Excel, LibreOffice Calc, Google Sheets) interpret as formula
-// triggers. Any CSV cell whose value begins with one of these characters is
-// prefixed with a single quote to force literal treatment (C-33/SA-48).
-// TAB (0x09) and CR (0x0D) are also triggering at position 0.
+// csvGuardChars is the set of leading characters that spreadsheet applications
+// (Excel, LibreOffice Calc, Google Sheets) interpret as formula triggers. Any
+// CSV cell whose value begins with one of these characters is prefixed with a
+// single quote to force literal treatment (C-33/SA-48). TAB (0x09) and CR
+// (0x0D) are also triggering at position 0.
 //
 // Reference: OWASP CSV-Injection (CWE-1236).
-const csvInjectionPrefixChars = "=+-@"
+const csvGuardChars = "=+-@\x09\x0D"
 
 // csvHeaders lists the columns emitted in the advisory CSV export, in order.
 // These correspond to the Advisory projection columns from the database layer.
@@ -109,17 +109,10 @@ func advisoryToCSVRow(adv database.Advisory) []string {
 // (C-33/SA-48). The encoding/csv writer handles RFC-4180 quoting for commas,
 // double-quotes, and embedded newlines within the cell value.
 func guardCSVCell(v string) string {
-	if v == "" {
+	if v == "" || !strings.ContainsRune(csvGuardChars, rune(v[0])) {
 		return v
 	}
-	b := v[0]
-	if b == 0x09 || b == 0x0D {
-		return "'" + v
-	}
-	if strings.ContainsRune(csvInjectionPrefixChars, rune(b)) {
-		return "'" + v
-	}
-	return v
+	return "'" + v
 }
 
 // csvDerefString returns the pointed-to string or "" for a nil pointer.

@@ -9,6 +9,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -263,7 +264,7 @@ func (db *DB) GetDocument(ctx context.Context, id int64, publishableTLP []string
 	switch err := db.pool.QueryRow(ctx, query, id, publishableTLP).Scan(&raw); {
 	case err == nil:
 		return raw, nil
-	case err == pgx.ErrNoRows:
+	case errors.Is(err, pgx.ErrNoRows):
 		return nil, ErrDocumentNotFound
 	default:
 		return nil, fmt.Errorf("reading document %d: %w", id, err)
@@ -304,7 +305,7 @@ func (db *DB) GetByTrackingID(
 		Scan(&raw, &withdrawn, &withdrawnAt); {
 	case scanErr == nil:
 		return raw, withdrawn, withdrawnAt, nil
-	case scanErr == pgx.ErrNoRows:
+	case errors.Is(scanErr, pgx.ErrNoRows):
 		return nil, false, nil, ErrDocumentNotFound
 	default:
 		return nil, false, nil, fmt.Errorf("reading advisory by tracking_id: %w", scanErr)
@@ -352,7 +353,7 @@ func (db *DB) GetByPublisherTrackingID(
 		Scan(&raw, &withdrawn, &withdrawnAt); {
 	case scanErr == nil:
 		return raw, withdrawn, withdrawnAt, nil
-	case scanErr == pgx.ErrNoRows:
+	case errors.Is(scanErr, pgx.ErrNoRows):
 		return nil, false, nil, ErrDocumentNotFound
 	default:
 		return nil, false, nil, fmt.Errorf("reading advisory by publisher+tracking_id: %w", scanErr)

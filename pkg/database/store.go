@@ -9,6 +9,7 @@ package database
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -69,7 +70,7 @@ func (db *DB) StoreDocument(
 	switch {
 	case err == nil:
 		// New revision inserted.
-	case err == pgx.ErrNoRows:
+	case errors.Is(err, pgx.ErrNoRows):
 		// Identical revision already present; nothing to do.
 		if err := tx.Commit(ctx); err != nil {
 			return StoreResult{}, fmt.Errorf("committing store transaction: %w", err)
@@ -119,7 +120,7 @@ func (db *DB) Watermark(ctx context.Context, feedURL string) (time.Time, bool, e
 	switch {
 	case err == nil:
 		return watermark, true, nil
-	case err == pgx.ErrNoRows:
+	case errors.Is(err, pgx.ErrNoRows):
 		return time.Time{}, false, nil
 	default:
 		return time.Time{}, false, fmt.Errorf("reading watermark for %q: %w", feedURL, err)

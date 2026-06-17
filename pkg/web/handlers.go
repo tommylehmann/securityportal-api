@@ -382,7 +382,7 @@ func parseFilters(ctx *gin.Context) (database.Filters, bool) {
 // "severity=high,critical" are equivalent. Whitespace is trimmed and empties
 // dropped.
 func multiValue(ctx *gin.Context, name string) []string {
-	out := make([]string, 0)
+	var out []string
 	for _, raw := range ctx.QueryArray(name) {
 		for _, part := range strings.Split(raw, ",") {
 			if v := strings.TrimSpace(part); v != "" {
