@@ -13,8 +13,8 @@ require (
 	github.com/ProtonMail/gopenpgp/v2 v2.10.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/gocsaf/csaf/v3 v3.5.1
-	github.com/jackc/pgx/v5 v5.9.1
-	golang.org/x/sync v0.20.0
+	github.com/jackc/pgx/v5 v5.10.0
+	golang.org/x/sync v0.21.0
 )
 
 require (
