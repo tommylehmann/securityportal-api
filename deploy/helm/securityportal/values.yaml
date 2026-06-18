@@ -28,7 +28,7 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 api:
   image:
-    repository: ghcr.io/securityportal/securityportal-api
+    repository: ghcr.io/tommylehmann/securityportal-api
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 
@@ -77,7 +77,7 @@ api:
 # ---------------------------------------------------------------------------
 web:
   image:
-    repository: ghcr.io/securityportal/securityportal-web
+    repository: ghcr.io/tommylehmann/securityportal-web
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 
@@ -298,17 +298,37 @@ externalDatabase:
   # When set, no Secret is generated for the database and dsn above is ignored.
   existingSecret: ""
 
+# When true (and postgresql.enabled), the chart generates the bundled-DB
+# password Secret itself (templates/secret-postgresql.yaml): the password is
+# created once on first install and reused on every upgrade, and the Secret
+# carries helm.sh/resource-policy: keep so it survives `helm uninstall` and is
+# re-read on reinstall under the same release name — so the password stays
+# fixed for the life of the data volume.  The subchart consumes it via
+# postgresql.auth.existingSecret.  Set false to manage that Secret yourself.
+manageBundledDbSecret: true
+
 # Bitnami PostgreSQL subchart — bundled database for dev/demo.
 # See https://github.com/bitnami/charts/tree/main/bitnami/postgresql for full
 # subchart values.
 postgresql:
   enabled: false
+  image:
+    repository: bitnami/postgresql
+    # Bitnami removed pinned version tags from docker.io/bitnami after the 2025
+    # "Secure Images" migration; the chart's default tag no longer pulls.  We
+    # use no advanced PostgreSQL features, so track "latest" for the dev DB.
+    tag: latest
   auth:
     database: securityportal
     username: securityportal
-    # Password placeholder — override for real deployments.
-    # Use postgresql.auth.existingSecret in production.
-    password: "changeme"
+    # Password is supplied via existingSecret (below), never hardcoded here.
+    password: ""
+    # Secret holding the DB password (keys: "password" for the app user,
+    # "postgres-password" for the superuser).  With manageBundledDbSecret=true
+    # the chart creates this Secret with a generated, upgrade-stable password.
+    # Point this at your own pre-created Secret (and set manageBundledDbSecret
+    # =false) to manage it yourself.
+    existingSecret: securityportal-postgresql
   primary:
     persistence:
       enabled: true

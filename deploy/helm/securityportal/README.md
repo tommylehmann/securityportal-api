@@ -23,18 +23,40 @@ all three targets.
 ## Quick start (default values, no live cluster)
 
 ```
-helm dependency update deploy/helm/securityportal
+helm dependency build deploy/helm/securityportal
 helm template my-portal deploy/helm/securityportal
 ```
 
 The default values render a complete, valid manifest set with placeholder
 credentials.  No live cluster is needed to inspect the output.
 
-> The Bitnami PostgreSQL subchart is **not vendored** into the repository. Run
-> `helm dependency build` (or `update`) first — it reads the pinned version from
-> `Chart.lock` and fetches the archive into `charts/` (gitignored). Only needed
-> when `postgresql.enabled=true`; the default external-database path does not
-> pull the subchart.
+> The Bitnami PostgreSQL subchart is **not vendored** into the repository
+> (`charts/` is gitignored), so run `helm dependency build` once before any
+> `helm template`/`install` **from this source tree** — it fetches the pinned
+> archive from `Chart.lock` into `charts/`. This is required regardless of
+> `postgresql.enabled`: Helm validates that every declared dependency is
+> present before rendering, even one disabled by its condition. Use
+> `helm dependency update` instead if the pinned version is unavailable (it
+> re-resolves and rewrites `Chart.lock`).
+>
+> The **published OCI chart bundles the subchart**, so installing via
+> `helm install oci://…` (below) needs no `helm dependency` step at all.
+
+---
+
+## Install from GHCR (OCI — no `helm repo add`)
+
+Each tagged release pushes the packaged chart to GHCR as an OCI artifact
+(see `RELEASING.md`). Install it directly — no repository to add:
+
+```bash
+helm install my-portal oci://ghcr.io/<owner>/charts/securityportal \
+  --version X.Y.Z -n securityportal -f my-values.yaml
+```
+
+The sections below use the in-repo chart path (`deploy/helm/securityportal`)
+for local/dev work; swap in the `oci://…` reference + `--version` to pull a
+published release instead.
 
 ---
 

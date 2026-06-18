@@ -74,7 +74,7 @@ spec:
             - name: SECURITYPORTAL_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ printf "%s-postgresql" .Release.Name }}
+                  name: {{ .Values.postgresql.auth.existingSecret | default (printf "%s-postgresql" .Release.Name) }}
                   key: password
             - name: SECURITYPORTAL_DATABASE_DSN
               value: {{ printf "postgres://%s:$(SECURITYPORTAL_DB_PASSWORD)@%s-postgresql:5432/%s?sslmode=disable"
@@ -107,7 +107,7 @@ spec:
             - name: SECURITYPORTAL_DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ printf "%s-postgresql" .Release.Name }}
+                  name: {{ .Values.postgresql.auth.existingSecret | default (printf "%s-postgresql" .Release.Name) }}
                   key: password
             - name: SECURITYPORTAL_DATABASE_DSN
               value: {{ printf "postgres://%s:$(SECURITYPORTAL_DB_PASSWORD)@%s-postgresql:5432/%s?sslmode=disable"

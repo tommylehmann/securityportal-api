@@ -156,6 +156,23 @@ jobs:
           sbom-path: dist/securityportal-api-sbom.spdx.json
           push-to-registry: true
 
+      - name: Package & push Helm chart (OCI)
+        if: github.ref_type == 'tag'
+        env:
+          CHART_REGISTRY: oci://ghcr.io/${{ github.repository_owner }}/charts
+        run: |
+          # Strip the leading "v" — chart/SemVer versions are bare (0.1.0).
+          v="${GITHUB_REF_NAME#v}"
+          chart=deploy/helm/securityportal
+          # `helm dependency build` resolves the dep URL against the local repo
+          # cache, so the Bitnami repo must be added even though the URL is in
+          # Chart.yaml. Pulls the pinned subchart from Chart.lock into charts/.
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm dependency build "${chart}"
+          helm package "${chart}" --version "${v}" --app-version "${v}" -d dist
+          helm registry login ghcr.io -u "${{ github.actor }}" -p "${{ secrets.GITHUB_TOKEN }}"
+          helm push "dist/securityportal-${v}.tgz" "${CHART_REGISTRY}"
+
       - name: Package release tarball
         if: github.ref_type == 'tag'
         run: |
