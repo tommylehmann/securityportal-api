@@ -38,6 +38,22 @@ credentials.  No live cluster is needed to inspect the output.
 
 ---
 
+## Install from GHCR (OCI — no `helm repo add`)
+
+Each tagged release pushes the packaged chart to GHCR as an OCI artifact
+(see `RELEASING.md`). Install it directly — no repository to add:
+
+```bash
+helm install my-portal oci://ghcr.io/<owner>/charts/securityportal \
+  --version X.Y.Z -n securityportal -f my-values.yaml
+```
+
+The sections below use the in-repo chart path (`deploy/helm/securityportal`)
+for local/dev work; swap in the `oci://…` reference + `--version` to pull a
+published release instead.
+
+---
+
 ## Production install
 
 ```bash

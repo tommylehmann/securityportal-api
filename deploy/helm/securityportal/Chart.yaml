@@ -29,5 +29,8 @@ maintainers:
 dependencies:
   - name: postgresql
     version: "16.x.x"
-    repository: "https://charts.bitnami.com/bitnami"
+    # Bitnami's legacy HTTP repo (charts.bitnami.com) no longer serves older
+    # versioned tarballs after the 2025 "Bitnami Secure Images" migration; the
+    # OCI registry still does and needs no `helm repo add`.
+    repository: "oci://registry-1.docker.io/bitnamicharts"
     condition: postgresql.enabled

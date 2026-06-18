@@ -306,9 +306,17 @@ postgresql:
   auth:
     database: securityportal
     username: securityportal
-    # Password placeholder — override for real deployments.
-    # Use postgresql.auth.existingSecret in production.
-    password: "changeme"
+    # Leave empty so the subchart auto-generates a random password and stores
+    # it in the "<release>-postgresql" Secret; the api reads it via secretKeyRef
+    # (see templates/deployment-api.yaml).  Do NOT hardcode a password here.
+    #
+    # Caveat: an auto-generated password is regenerated on `helm upgrade` while
+    # the PVC keeps the old one -> auth failure.  To persist a DB across
+    # upgrades, pre-create a Secret and set existingSecret below instead.
+    password: ""
+    # Name of a pre-existing Secret holding the password (key: "password").
+    # When set, the subchart uses it and does not generate one.
+    existingSecret: ""
   primary:
     persistence:
       enabled: true

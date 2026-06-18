@@ -18,6 +18,7 @@ A release is driven by **pushing a Git tag**. The
 | Artifact | Where | Notes |
 |---|---|---|
 | Container image | `ghcr.io/<owner>/securityportal-api` | Primary artifact. Tags: `vX.Y.Z`, `X.Y`, `X`, `latest`, `sha-<commit>`. Consumed by `docker/docker-compose.yml` and the Helm chart. |
+| Helm chart (OCI) | `oci://ghcr.io/<owner>/charts/securityportal` | Packaged from `deploy/helm/securityportal` at version `X.Y.Z` (tag with the leading `v` stripped). Installable with `helm install` — no `helm repo add` needed. |
 | Build-provenance attestation | attached to the image in GHCR | SLSA provenance, keyless (OIDC). Proves which workflow/commit built the image. |
 | SBOM attestation | attached to the image in GHCR | SPDX SBOM bound to the image digest. |
 | GitHub Release | the repo's Releases page | `securityportal-api-<version>-linux-amd64.tar.gz` (versioned binary + README/LICENSE/CHANGELOG + SBOMs) plus standalone `*-sbom.spdx.json` and `*-sbom.cdx.json`. |
@@ -82,6 +83,10 @@ docker pull ghcr.io/<owner>/securityportal-api:vX.Y.Z
 # Verify build provenance and SBOM (needs gh >= 2.49):
 gh attestation verify oci://ghcr.io/<owner>/securityportal-api:vX.Y.Z \
   --owner <owner>
+
+# Install the Helm chart straight from GHCR (no `helm repo add`):
+helm install my-portal oci://ghcr.io/<owner>/charts/securityportal \
+  --version X.Y.Z -n securityportal -f my-values.yaml
 ```
 
 SBOMs are also attached to each GitHub Release (`*-sbom.spdx.json`,
