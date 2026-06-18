@@ -15,10 +15,10 @@ keywords:
   - advisory
   - security
   - portal
-home: https://github.com/securityportal/securityportal-api
+home: https://github.com/tommylehmann/securityportal-api
 sources:
-  - https://github.com/securityportal/securityportal-api
-  - https://github.com/securityportal/securityportal-web
+  - https://github.com/tommylehmann/securityportal-api
+  - https://github.com/tommylehmann/securityportal-web
 maintainers:
   - name: SecurityPortal operators
 

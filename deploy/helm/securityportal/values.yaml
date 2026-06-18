@@ -28,7 +28,7 @@ fullnameOverride: ""
 # ---------------------------------------------------------------------------
 api:
   image:
-    repository: ghcr.io/securityportal/securityportal-api
+    repository: ghcr.io/tommylehmann/securityportal-api
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 
@@ -77,7 +77,7 @@ api:
 # ---------------------------------------------------------------------------
 web:
   image:
-    repository: ghcr.io/securityportal/securityportal-web
+    repository: ghcr.io/tommylehmann/securityportal-web
     tag: "0.1.0"
     pullPolicy: IfNotPresent
 
