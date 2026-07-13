@@ -11,7 +11,7 @@
 # .github/dependabot.yml) bumps the digest. Keep the tag aligned with the
 # go.mod toolchain when it advances.
 # library/golang:1.26.4-alpine
-FROM library/golang:1.26.4-alpine@sha256:f1ddd9fe14fffc091dd98cb4bfa999f32c5fc77d2f2305ea9f0e2595c5437c14 AS build
+FROM library/golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS build
 # CA certificates are needed to pull advisories from the HTTPS Trusted Provider.
 RUN apk add -U --no-cache ca-certificates && update-ca-certificates
 
